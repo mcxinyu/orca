@@ -14,6 +14,7 @@ import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/works
 import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import type { PtyTransport } from './pty-transport'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
+import { TerminalPaneRichInputToggle } from './TerminalPaneRichInputToggle'
 
 export type PaneTitleOverlayRect = {
   left: number
@@ -42,6 +43,9 @@ type TerminalPaneHeaderOverlayProps = {
   hiddenStartupStyle: CSSProperties
   managerRef: RefObject<PaneManager | null>
   paneTransportsRef: RefObject<Map<number, PtyTransport>>
+  canToggleRichInput?: boolean
+  isRichInputOpen?: boolean
+  onToggleRichInput?: () => void
   /** When true, this pane can toggle the native chat view; renders a chat/terminal
    *  toggle as the first button in the pane header actions row (beside split/close).
    *  The caller gates it to the active pane to avoid duplicating it across splits. */
@@ -85,6 +89,9 @@ export default function TerminalPaneHeaderOverlay({
   hiddenStartupStyle,
   managerRef,
   paneTransportsRef,
+  canToggleRichInput,
+  isRichInputOpen,
+  onToggleRichInput,
   canToggleNativeChat,
   isChatViewMode,
   onToggleNativeChat,
@@ -244,6 +251,12 @@ export default function TerminalPaneHeaderOverlay({
                   </button>
                 ) : null}
                 <div className="pane-title-actions ml-auto flex shrink-0 items-center gap-0">
+                  {canToggleRichInput && isActivePane ? (
+                    <TerminalPaneRichInputToggle
+                      isOpen={isRichInputOpen}
+                      onToggle={onToggleRichInput}
+                    />
+                  ) : null}
                   {canContinueAgentSessionInNewSession && isActivePane ? (
                     <Tooltip>
                       <TooltipTrigger asChild>

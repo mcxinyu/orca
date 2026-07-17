@@ -102,6 +102,7 @@ export type KeybindingActionId =
   | 'settings.search'
   | 'terminal.copySelection'
   | 'terminal.paste'
+  | 'terminal.richInput.toggle'
   | 'terminal.search'
   | 'terminal.clear'
   | 'terminal.focusNextPane'
@@ -951,6 +952,19 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
       darwin: ['Mod+V'],
       linux: ['Ctrl+V', 'Ctrl+Shift+V', 'Shift+Insert'],
       win32: ['Ctrl+V', 'Ctrl+Shift+V', 'Shift+Insert']
+    }
+  },
+  {
+    id: 'terminal.richInput.toggle',
+    title: 'Toggle rich terminal input',
+    group: 'Terminal Panes',
+    scope: 'terminal',
+    searchKeywords: ['shortcut', 'terminal', 'prompt', 'composer', 'rich input', 'multiline'],
+    defaultBindings: {
+      darwin: ['Mod+I'],
+      // Why: keep Ctrl+I available to terminal applications on non-Mac hosts.
+      linux: ['Ctrl+Shift+M'],
+      win32: ['Ctrl+Shift+M']
     }
   },
   {

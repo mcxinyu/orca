@@ -12,6 +12,7 @@ const {
   spawnMock,
   childStdinEndMock,
   resolveAuthorizedPathMock,
+  authorizeExternalPathMock,
   fsMkdirMock,
   fsReaddirMock,
   fsRmMock,
@@ -45,6 +46,7 @@ const {
     return child
   }),
   resolveAuthorizedPathMock: vi.fn(),
+  authorizeExternalPathMock: vi.fn(),
   fsMkdirMock: vi.fn(),
   fsReaddirMock: vi.fn(),
   fsRmMock: vi.fn(),
@@ -83,6 +85,7 @@ vi.mock('../ipc/filesystem-auth', () => ({
     'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.',
   isENOENT: (error: unknown): boolean =>
     error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT',
+  authorizeExternalPath: authorizeExternalPathMock,
   resolveAuthorizedPath: resolveAuthorizedPathMock
 }))
 
@@ -543,6 +546,7 @@ describe('registerClipboardHandlers', () => {
 
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readSelectionText')
+    expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readImageDataUrl')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeSelectionText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeImage')
@@ -571,6 +575,7 @@ describe('registerClipboardHandlers', () => {
     expect(fsWriteFileMock).toHaveBeenCalledWith(expectedPath, png)
     expect(clipboardReadBufferMock).not.toHaveBeenCalled()
     expect(fsOpenMock).not.toHaveBeenCalled()
+    expect(authorizeExternalPathMock).toHaveBeenCalledWith(expectedPath)
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
   })
 
