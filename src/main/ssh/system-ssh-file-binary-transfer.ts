@@ -181,14 +181,20 @@ function makeWindowsWriteFileCommand(
   options?: { append?: boolean; exclusive?: boolean; mode?: number }
 ): string {
   const fileMode = options?.append ? 'Append' : options?.exclusive ? 'CreateNew' : 'Create'
-  const restrictAccess =
+  const openOutputStream =
     options?.mode === 0o600
       ? [
-          '$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
-          '& icacls.exe $path /inheritance:r /grant:r "${identity}:(F)" | Out-Null',
-          'if ($LASTEXITCODE -ne 0) { throw "icacls failed" }'
+          '$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User',
+          '$security = [System.Security.AccessControl.FileSecurity]::new()',
+          '$security.SetOwner($identity)',
+          '$security.SetAccessRuleProtection($true,$false)',
+          '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow)',
+          '$security.AddAccessRule($rule)',
+          `$outputStream = [System.IO.FileStream]::new($path,[System.IO.FileMode]::${fileMode},[System.Security.AccessControl.FileSystemRights]::Write,[System.IO.FileShare]::None,4096,[System.IO.FileOptions]::None,$security)`
         ]
-      : []
+      : [
+          `$outputStream = [System.IO.File]::Open($path, [System.IO.FileMode]::${fileMode}, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)`
+        ]
   return powerShellCommand(
     [
       '$ErrorActionPreference = "Stop"',
@@ -196,9 +202,8 @@ function makeWindowsWriteFileCommand(
       '$parent = [System.IO.Path]::GetDirectoryName($path)',
       'if ($parent) { $null = [System.IO.Directory]::CreateDirectory($parent) }',
       '$inputStream = [Console]::OpenStandardInput()',
-      `$outputStream = [System.IO.File]::Open($path, [System.IO.FileMode]::${fileMode}, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)`,
-      'try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }',
-      ...restrictAccess
+      ...openOutputStream,
+      'try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }'
     ].join('; ')
   )
 }

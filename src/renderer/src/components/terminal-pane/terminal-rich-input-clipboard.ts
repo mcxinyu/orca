@@ -146,9 +146,14 @@ function sanitizePastedNodes(fragment: Fragment, token: string): Fragment {
   const nodes: ProseMirrorNode[] = []
   let stripLeadingSpacer = false
   fragment.forEach((node) => {
-    if (node.isText && stripLeadingSpacer) {
-      stripLeadingSpacer = false
-      const text = node.text?.replace(TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER, '') ?? ''
+    const stripSpacer = stripLeadingSpacer
+    stripLeadingSpacer = false
+    if (
+      node.isText &&
+      stripSpacer &&
+      node.text?.startsWith(TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER)
+    ) {
+      const text = node.text.slice(TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER.length)
       if (text) {
         nodes.push(node.type.schema.text(text, node.marks))
       }

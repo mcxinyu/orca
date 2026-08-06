@@ -686,9 +686,17 @@ describe('spawnSystemSsh', () => {
     const args = spawnMock.mock.calls[0][1] as string[]
     const remoteCommand = args.at(-1) ?? ''
     expect(remoteCommand).toContain('powershell.exe')
-    expect(decodePowerShellCommand(remoteCommand)).toContain('CreateNew')
-    expect(decodePowerShellCommand(remoteCommand)).toContain('icacls.exe')
-    expect(decodePowerShellCommand(remoteCommand)).toContain('/inheritance:r /grant:r')
+    const decodedCommand = decodePowerShellCommand(remoteCommand)
+    expect(decodedCommand).toContain('CreateNew')
+    expect(decodedCommand).toContain('[System.Security.AccessControl.FileSecurity]::new()')
+    expect(decodedCommand).toContain('$security.SetAccessRuleProtection($true,$false)')
+    expect(decodedCommand).toContain(
+      '[System.Security.AccessControl.FileSystemRights]::FullControl'
+    )
+    expect(decodedCommand).not.toContain('icacls.exe')
+    expect(decodedCommand.indexOf('[System.IO.FileStream]::new')).toBeLessThan(
+      decodedCommand.indexOf('$inputStream.CopyTo($outputStream)')
+    )
     expect(remoteCommand).not.toContain('/bin/sh')
     expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from('png'))
   })

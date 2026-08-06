@@ -41,7 +41,7 @@ export function handleTerminalRichInputKeyDown(
     return false
   }
   const pasteModifier = getShortcutPlatform() === 'darwin' ? event.metaKey : event.ctrlKey
-  if (event.key.toLowerCase() === 'v' && pasteModifier) {
+  if (event.key.toLowerCase() === 'v' && pasteModifier && !event.shiftKey && !event.repeat) {
     // Native Electron image clipboards can omit the DOM paste payload. Probe
     // first, but the attachment hook does not block text paste unless an image exists.
     context.pasteImageFromClipboard()

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type RefObject } from 'react'
+import { useCallback, useMemo, type RefObject } from 'react'
 import type { JSONContent } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
@@ -79,12 +79,13 @@ export function useTerminalRichInputEditorAttachments({
     onAttachmentsAdded: insertAddedAttachments,
     enabled
   })
-  const syncAttachmentsRef = useRef(attachmentState.syncAttachments)
-  syncAttachmentsRef.current = attachmentState.syncAttachments
-
-  const syncEditorAttachments = useCallback((content: JSONContent) => {
-    syncAttachmentsRef.current(terminalRichInputImageAttachments(content))
-  }, [])
+  const { syncAttachments } = attachmentState
+  const syncEditorAttachments = useCallback(
+    (content: JSONContent) => {
+      syncAttachments(terminalRichInputImageAttachments(content))
+    },
+    [syncAttachments]
+  )
 
   return {
     ...attachmentState,

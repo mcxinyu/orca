@@ -20,6 +20,9 @@ describe('terminalRichInputCanAttachImages', () => {
     expect(terminalRichInputInlineImageText(null, '/tmp/$(touch pwned).png', 'posix')).toBe(
       "'/tmp/$(touch pwned).png' "
     )
+    expect(
+      terminalRichInputInlineImageText(null, 'C:\\Users\\me\\design image.png', 'windows')
+    ).toBe('"C:\\Users\\me\\design image.png" ')
     for (const agent of ['opencode', 'kimi', 'pi'] as const) {
       expect(terminalRichInputInlineImageText(agent, '/tmp/design image.png', 'posix')).toBe(
         '@"/tmp/design image.png" '

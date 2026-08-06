@@ -144,6 +144,45 @@ describe('terminal rich input model', () => {
     })
   })
 
+  it('preserves explicit local ownership when the current pane uses a remote route', () => {
+    const content = terminalRichInputApplyResourceContext(
+      {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: TERMINAL_RICH_INPUT_FILE_MENTION_NODE,
+                attrs: {
+                  path: 'README.md',
+                  connectionId: null,
+                  runtimeEnvironmentId: null,
+                  worktreeId: 'saved-worktree',
+                  worktreePath: '/saved/repo'
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        connectionId: 'current-connection',
+        runtimeEnvironmentId: 'current-runtime',
+        worktreeId: 'current-worktree',
+        worktreePath: '/current/repo'
+      }
+    )
+
+    expect(content.content?.[0]?.content?.[0]?.attrs).toEqual({
+      path: 'README.md',
+      connectionId: null,
+      runtimeEnvironmentId: null,
+      worktreeId: 'saved-worktree',
+      worktreePath: '/saved/repo'
+    })
+  })
+
   it('keeps image attachments inline without serializing them into prompt text', () => {
     const imageNodes = terminalRichInputImageAttachmentsToContent(
       [{ id: 'image-1', path: '/tmp/image.png' }],

@@ -14889,7 +14889,7 @@
         "terminalPlaceholder": "Type a command or prompt…",
         "sendFailed": "Terminal input was not sent.",
         "sendPartial": "Part of the input was pasted. Check the terminal before retrying.",
-        "hint": "Enter to send · Shift+Enter for newline",
+        "hint": "Enter to send · {{value0}} for newline",
         "shortcutHint": "to close",
         "send": "Send to terminal",
         "loadingFiles": "Loading files…",

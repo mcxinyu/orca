@@ -89,6 +89,31 @@ describe('terminal rich input keydown', () => {
     expect(ctx.pasteImageFromClipboard).toHaveBeenCalledOnce()
   })
 
+  it('skips native image probes for repeated and plain-text paste chords', () => {
+    const platform = vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Windows')
+    const ctx = context()
+
+    handleTerminalRichInputKeyDown(
+      new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, repeat: true }),
+      ctx
+    )
+    handleTerminalRichInputKeyDown(
+      new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true }),
+      ctx
+    )
+    platform.mockReturnValue('Macintosh')
+    handleTerminalRichInputKeyDown(
+      new KeyboardEvent('keydown', { key: 'v', metaKey: true, repeat: true }),
+      ctx
+    )
+    handleTerminalRichInputKeyDown(
+      new KeyboardEvent('keydown', { key: 'v', metaKey: true, shiftKey: true }),
+      ctx
+    )
+
+    expect(ctx.pasteImageFromClipboard).not.toHaveBeenCalled()
+  })
+
   it('ignores IME-owned Enter events', () => {
     const ctx = context()
     const event = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })

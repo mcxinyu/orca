@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { joinPath } from '@/lib/path'
+import { TERMINAL_RICH_INPUT_IMAGE_INSERTION_SIZE } from './terminal-rich-input-model'
 import { useTerminalRichInputAttachments } from './use-terminal-rich-input-attachments'
 
 vi.mock('@/i18n/i18n', () => ({
@@ -17,20 +18,23 @@ type OnAttachmentsAdded = Parameters<
 >[0]['onAttachmentsAdded']
 
 const noopAttachmentsAdded: OnAttachmentsAdded = () => {}
+const noopFocusEditor = (): void => {}
 
 function Probe({
   onReady,
-  onAttachmentsAdded = noopAttachmentsAdded
+  onAttachmentsAdded = noopAttachmentsAdded,
+  focusEditor = noopFocusEditor
 }: {
   onReady: (api: ProbeApi) => void
   onAttachmentsAdded?: OnAttachmentsAdded
+  focusEditor?: () => void
 }): React.JSX.Element {
   const api = useTerminalRichInputAttachments({
     scopeKey: 'tab:leaf',
     initialContent: { type: 'doc', content: [{ type: 'paragraph' }] },
     connectionId: null,
     runtimeEnvironmentId: null,
-    focusEditor: () => {},
+    focusEditor,
     onAttachmentsAdded,
     enabled: true
   })
@@ -41,7 +45,8 @@ function Probe({
 }
 
 async function renderProbe(
-  onAttachmentsAdded?: OnAttachmentsAdded
+  onAttachmentsAdded?: OnAttachmentsAdded,
+  focusEditor?: () => void
 ): Promise<{ root: Root; latest: () => ProbeApi }> {
   const root = createRoot(document.createElement('div'))
   let api: ProbeApi | null = null
@@ -49,7 +54,8 @@ async function renderProbe(
     root.render(
       createElement(Probe, {
         onReady: (next: ProbeApi) => (api = next),
-        onAttachmentsAdded
+        onAttachmentsAdded,
+        focusEditor
       })
     )
   })
@@ -66,6 +72,7 @@ async function renderProbe(
 
 describe('useTerminalRichInputAttachments', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -118,6 +125,35 @@ describe('useTerminalRichInputAttachments', () => {
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(saveClipboardImageAsTempFile).toHaveBeenCalledOnce()
     expect(probe.latest().attachments[0]?.path).toBe('/tmp/confirmed.png')
+    probe.root.unmount()
+  })
+
+  it('handles a captured image paste only once when ProseMirror sees the same event', async () => {
+    const saveClipboardImageAsTempFile = vi.fn().mockResolvedValue('/tmp/image.png')
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ui: { saveClipboardImageAsTempFile } }
+    })
+    const probe = await renderProbe()
+    let defaultPrevented = false
+    const event = {
+      clipboardData: { items: [], getData: () => '' } as unknown as DataTransfer,
+      get defaultPrevented() {
+        return defaultPrevented
+      },
+      preventDefault: () => {
+        defaultPrevented = true
+      }
+    }
+
+    await act(async () => {
+      expect(probe.latest().handlePaste(event)).toBe(true)
+      expect(probe.latest().handlePaste(event)).toBe(false)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(saveClipboardImageAsTempFile).toHaveBeenCalledOnce()
     probe.root.unmount()
   })
 
@@ -217,7 +253,10 @@ describe('useTerminalRichInputAttachments', () => {
       '/tmp/first.png',
       '/tmp/second.png'
     ])
-    expect(onAttachmentsAdded.mock.calls.map(([, position]) => position)).toEqual([5, 7])
+    expect(onAttachmentsAdded.mock.calls.map(([, position]) => position)).toEqual([
+      5,
+      5 + TERMINAL_RICH_INPUT_IMAGE_INSERTION_SIZE
+    ])
     probe.root.unmount()
   })
 
@@ -262,6 +301,75 @@ describe('useTerminalRichInputAttachments', () => {
     expect(onAttachmentsAdded.mock.calls.map(([, position]) => position)).toEqual([5, 9])
     editor.destroy()
     probe.root.unmount()
+  })
+
+  it('cancels pending paste work when unmounted', async () => {
+    vi.useFakeTimers()
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    let resolveSave: (value: { path: string; previewSrc: string } | null) => void = () => {}
+    const saveClipboardImageAsTempFile = vi.fn(
+      () =>
+        new Promise<{ path: string; previewSrc: string } | null>(
+          (resolve) => (resolveSave = resolve)
+        )
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ui: { saveClipboardImageAsTempFile } }
+    })
+    const onAttachmentsAdded = vi.fn<OnAttachmentsAdded>()
+    const probe = await renderProbe(onAttachmentsAdded)
+
+    act(() => {
+      probe.latest().pasteImageFromClipboard(true)
+      probe.latest().pasteImageFromClipboard(true)
+      probe.root.unmount()
+    })
+    await act(async () => {
+      resolveSave({ path: '/tmp/late.png', previewSrc: 'blob:late-preview' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onAttachmentsAdded).not.toHaveBeenCalled()
+    expect(saveClipboardImageAsTempFile).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:late-preview')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('cancels scheduled editor focus when unmounted', async () => {
+    const focusEditor = vi.fn()
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(42)
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+    const probe = await renderProbe(undefined, focusEditor)
+
+    await act(async () => probe.latest().appendImagePaths(['/tmp/image.png']))
+    act(() => probe.root.unmount())
+
+    expect(requestFrame).toHaveBeenCalledOnce()
+    expect(cancelFrame).toHaveBeenCalledWith(42)
+    expect(focusEditor).not.toHaveBeenCalled()
+  })
+
+  it('revokes unmounted blob previews unless another attachment retains them', async () => {
+    vi.useFakeTimers()
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const probe = await renderProbe()
+    const attachment = {
+      id: 'image-1',
+      path: '/tmp/image.png',
+      previewSrc: 'blob:preview-1'
+    }
+
+    await act(async () => probe.latest().syncAttachments([attachment]))
+    await act(async () => probe.latest().syncAttachments([]))
+    await act(async () => probe.latest().syncAttachments([attachment]))
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    act(() => probe.root.unmount())
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1')
   })
 
   it('tracks exact editor attachment order and restores undone deletions', async () => {

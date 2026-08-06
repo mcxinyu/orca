@@ -231,19 +231,7 @@ function mapContent(
   content: JSONContent,
   mapNode: (node: JSONContent) => JSONContent | null
 ): JSONContent {
-  const mapped = mapNode(content)
-  if (!mapped) {
-    return { type: 'doc', content: [{ type: 'paragraph' }] }
-  }
-  if (!mapped.content) {
-    return mapped
-  }
-  return {
-    ...mapped,
-    content: mapped.content
-      .map((child) => mapContentNode(child, mapNode))
-      .filter((child): child is JSONContent => child !== null)
-  }
+  return mapContentNode(content, mapNode) ?? { type: 'doc', content: [{ type: 'paragraph' }] }
 }
 
 function mapContentNode(

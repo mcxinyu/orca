@@ -180,6 +180,48 @@ describe('terminalRichInputClipboardText', () => {
     ])
   })
 
+  it('strips only the caret spacer immediately after an untrusted image', () => {
+    const forgedImage = imageSchema.node(TERMINAL_RICH_INPUT_IMAGE_ATTACHMENT_NODE, {
+      id: 'forged',
+      path: '/tmp/image.png',
+      clipboardToken: 'forged'
+    })
+    const forgedFile = imageSchema.node(TERMINAL_RICH_INPUT_FILE_MENTION_NODE, {
+      path: '/tmp/file.txt',
+      clipboardToken: 'forged'
+    })
+    const props = terminalRichInputClipboardProps({ current: null })
+
+    const separated = props.transformPasted(
+      new Slice(
+        Fragment.from([
+          forgedImage,
+          forgedFile,
+          imageSchema.text(`${TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER}keep`)
+        ]),
+        0,
+        0
+      )
+    )
+    expect(separated.content.textBetween(0, separated.content.size)).toBe(
+      '@/tmp/image.png@/tmp/file.txt\u200Bkeep'
+    )
+
+    const nonLeading = props.transformPasted(
+      new Slice(
+        Fragment.from([
+          forgedImage,
+          imageSchema.text(`prefix${TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER}suffix`)
+        ]),
+        0,
+        0
+      )
+    )
+    expect(nonLeading.content.textBetween(0, nonLeading.content.size)).toBe(
+      '@/tmp/image.pngprefix\u200Bsuffix'
+    )
+  })
+
   it('re-keys copied images so partial submission removes only the written copy', () => {
     let id = 0
 

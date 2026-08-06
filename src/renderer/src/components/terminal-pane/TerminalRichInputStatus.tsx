@@ -2,12 +2,19 @@ import { SquareTerminal } from 'lucide-react'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { useShortcutKeyDetails } from '@/hooks/useShortcutLabel'
 import { translate } from '@/i18n/i18n'
+import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import type { TerminalRichInputSubmitResult } from './terminal-rich-input-submit'
 
 export type TerminalRichInputSendError = Exclude<
   TerminalRichInputSubmitResult['status'],
   'submitted'
 > | null
+
+export function terminalRichInputNewlineShortcut(
+  platform: NodeJS.Platform = getShortcutPlatform()
+): string {
+  return platform === 'darwin' ? '⇧+Enter' : 'Shift+Enter'
+}
 
 export function TerminalRichInputStatus({
   error
@@ -22,7 +29,9 @@ export function TerminalRichInputStatus({
           'Part of the input was pasted. Check the terminal before retrying.'
         )
       : translate('components.terminal.richInput.sendFailed', 'Terminal input was not sent.')
-    : translate('components.terminal.richInput.hint', 'Enter to send · Shift+Enter for newline')
+    : translate('components.terminal.richInput.hint', 'Enter to send · {{value0}} for newline', {
+        value0: terminalRichInputNewlineShortcut()
+      })
   return (
     <>
       <SquareTerminal className="size-3.5 text-muted-foreground" />

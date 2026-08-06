@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { translate } from '@/i18n/i18n'
 import { extractIpcErrorMessage } from '@/lib/ipc-error'
 import { isImageDropPath } from './terminal-drop-image-path'
@@ -7,6 +7,11 @@ import {
   TERMINAL_RICH_INPUT_IMAGE_INSERTION_SIZE,
   terminalRichInputImageAttachments
 } from './terminal-rich-input-model'
+import { syncTerminalRichInputPreviewUrls } from './terminal-rich-input-preview-revocation'
+import {
+  useTerminalRichInputAttachmentLifecycle,
+  type TerminalRichInputPendingPaste
+} from './use-terminal-rich-input-attachment-lifecycle'
 import type { TerminalRichInputImageAttachment } from './terminal-rich-input-types'
 
 type ClipboardEventLike = {
@@ -69,7 +74,11 @@ export function useTerminalRichInputAttachments({
   const clipboardPasteInFlight = useRef(false)
   const clipboardPasteConfirmed = useRef(false)
   const clipboardInsertionPosition = useRef<number | undefined>(undefined)
-  const queuedClipboardPastes = useRef<{ insertionPosition?: number }[]>([])
+  const queuedClipboardPastes = useRef<TerminalRichInputPendingPaste[]>([])
+  const { mounted, pendingTimer, scheduleFocus } = useTerminalRichInputAttachmentLifecycle(
+    focusEditor,
+    queuedClipboardPastes
+  )
 
   const updateAttachments = useCallback(
     (
@@ -83,7 +92,7 @@ export function useTerminalRichInputAttachments({
           return previous
         }
         if (previous.scopeKey === scopeKey) {
-          syncAttachmentPreviewUrls(previousAttachments, attachments)
+          syncTerminalRichInputPreviewUrls(previousAttachments, attachments)
         }
         return { scopeKey, attachments }
       })
@@ -105,9 +114,9 @@ export function useTerminalRichInputAttachments({
       updateAttachments((previous) => [...previous, ...added])
       onAttachmentsAdded(added, insertionPosition)
       setNotice(null)
-      requestAnimationFrame(focusEditor)
+      scheduleFocus()
     },
-    [focusEditor, onAttachmentsAdded, setNotice, updateAttachments]
+    [onAttachmentsAdded, scheduleFocus, setNotice, updateAttachments]
   )
 
   const appendImagePaths = useCallback(
@@ -136,9 +145,12 @@ export function useTerminalRichInputAttachments({
       clipboardPasteInFlight.current = true
       clipboardPasteConfirmed.current = confirmedImage
       clipboardInsertionPosition.current = insertionPosition
-      let pendingTimer: number | null = null
       setAttachmentBusy(true)
-      pendingTimer = window.setTimeout(() => setAttachmentPending(true), 120)
+      pendingTimer.current = window.setTimeout(() => {
+        if (mounted.current) {
+          setAttachmentPending(true)
+        }
+      }, 120)
       void window.api.ui
         .saveClipboardImageAsTempFile({
           connectionId: connectionId ?? undefined,
@@ -146,6 +158,13 @@ export function useTerminalRichInputAttachments({
           includeLocalPreview: true
         })
         .then((savedImage) => {
+          if (!mounted.current) {
+            const previewSrc = typeof savedImage === 'string' ? undefined : savedImage?.previewSrc
+            if (previewSrc?.startsWith('blob:')) {
+              URL.revokeObjectURL?.(previewSrc)
+            }
+            return
+          }
           if (savedImage) {
             const insertionPosition = clipboardInsertionPosition.current
             const source = typeof savedImage === 'string' ? { path: savedImage } : savedImage
@@ -163,20 +182,27 @@ export function useTerminalRichInputAttachments({
           }
         })
         .catch((error) => {
-          setNotice(
-            extractIpcErrorMessage(
-              error,
-              translate('components.terminal.richInput.imagePasteFailed', 'Image paste failed.')
+          if (mounted.current) {
+            setNotice(
+              extractIpcErrorMessage(
+                error,
+                translate('components.terminal.richInput.imagePasteFailed', 'Image paste failed.')
+              )
             )
-          )
+          }
         })
         .finally(() => {
-          if (pendingTimer !== null) {
-            window.clearTimeout(pendingTimer)
+          if (pendingTimer.current !== null) {
+            window.clearTimeout(pendingTimer.current)
+            pendingTimer.current = null
           }
           clipboardPasteInFlight.current = false
           clipboardPasteConfirmed.current = false
           clipboardInsertionPosition.current = undefined
+          if (!mounted.current) {
+            queuedClipboardPastes.current = []
+            return
+          }
           setAttachmentBusy(false)
           setAttachmentPending(false)
           const nextPaste = queuedClipboardPastes.current.shift()
@@ -185,7 +211,15 @@ export function useTerminalRichInputAttachments({
           }
         })
     },
-    [appendImageSources, connectionId, enabled, runtimeEnvironmentId, setNotice]
+    [
+      appendImageSources,
+      connectionId,
+      enabled,
+      mounted,
+      pendingTimer,
+      runtimeEnvironmentId,
+      setNotice
+    ]
   )
 
   const mapPendingInsertionPositions = useCallback(
@@ -221,6 +255,17 @@ export function useTerminalRichInputAttachments({
     [enabled, pasteImageFromClipboard]
   )
 
+  const syncAttachments = useCallback(
+    (next: readonly TerminalRichInputImageAttachment[]) =>
+      updateAttachments((previous) => (sameAttachments(previous, next) ? previous : [...next])),
+    [updateAttachments]
+  )
+
+  useEffect(() => {
+    syncTerminalRichInputPreviewUrls([], attachments)
+    return () => syncTerminalRichInputPreviewUrls(attachments, [])
+  }, [attachments])
+
   return {
     attachments,
     attachmentBusy,
@@ -230,38 +275,7 @@ export function useTerminalRichInputAttachments({
     handlePaste,
     mapPendingInsertionPositions,
     pasteImageFromClipboard,
-    syncAttachments: (next) =>
-      updateAttachments((previous) => (sameAttachments(previous, next) ? previous : [...next]))
-  }
-}
-
-const pendingPreviewRevocations = new Map<string, number>()
-
-function syncAttachmentPreviewUrls(
-  previous: readonly TerminalRichInputImageAttachment[],
-  next: readonly TerminalRichInputImageAttachment[]
-): void {
-  const retained = new Set(next.flatMap(({ previewSrc }) => (previewSrc ? [previewSrc] : [])))
-  for (const previewSrc of retained) {
-    const timer = pendingPreviewRevocations.get(previewSrc)
-    if (timer !== undefined) {
-      window.clearTimeout(timer)
-      pendingPreviewRevocations.delete(previewSrc)
-    }
-  }
-  for (const { previewSrc } of previous) {
-    if (
-      !previewSrc?.startsWith('blob:') ||
-      retained.has(previewSrc) ||
-      pendingPreviewRevocations.has(previewSrc)
-    ) {
-      continue
-    }
-    const timer = window.setTimeout(() => {
-      URL.revokeObjectURL?.(previewSrc)
-      pendingPreviewRevocations.delete(previewSrc)
-    }, 30_000)
-    pendingPreviewRevocations.set(previewSrc, timer)
+    syncAttachments
   }
 }
 

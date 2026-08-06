@@ -19,7 +19,7 @@ export type SavedClipboardImage = {
 }
 
 const REMOTE_CLIPBOARD_IMAGE_TEMP_DIR = '/tmp'
-const LOCAL_CLIPBOARD_IMAGE_TEMP_DIR = 'orca-clipboard-images'
+const LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX = 'orca-clipboard-images-'
 
 function joinRemotePath(basePath: string, fileName: string): string {
   if (isWindowsAbsolutePathLike(basePath)) {
@@ -49,10 +49,15 @@ export async function saveClipboardImageBufferAsTempFile(
     return remotePath
   }
 
-  const tempDir = path.join(app.getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR)
-  await fs.mkdir(tempDir, { recursive: true, mode: 0o700 })
-  await fs.chmod(tempDir, 0o700).catch(() => {})
+  const tempDir = await fs.mkdtemp(
+    path.join(app.getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX)
+  )
   const tempPath = path.join(tempDir, fileName)
-  await fs.writeFile(tempPath, buffer, { mode: 0o600 })
-  return tempPath
+  try {
+    await fs.writeFile(tempPath, buffer, { flag: 'wx', mode: 0o600 })
+    return tempPath
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    throw error
+  }
 }

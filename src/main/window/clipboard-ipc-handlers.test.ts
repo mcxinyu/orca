@@ -14,6 +14,7 @@ const {
   resolveAuthorizedPathMock,
   fsMkdirMock,
   fsChmodMock,
+  fsMkdtempMock,
   fsReaddirMock,
   fsRmMock,
   fsWriteFileMock,
@@ -48,6 +49,7 @@ const {
   resolveAuthorizedPathMock: vi.fn(),
   fsMkdirMock: vi.fn(),
   fsChmodMock: vi.fn(),
+  fsMkdtempMock: vi.fn(),
   fsReaddirMock: vi.fn(),
   fsRmMock: vi.fn(),
   fsWriteFileMock: vi.fn(),
@@ -71,6 +73,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('node:fs/promises', () => ({
   mkdir: fsMkdirMock,
+  mkdtemp: fsMkdtempMock,
   readdir: fsReaddirMock,
   rm: fsRmMock,
   open: fsOpenMock,
@@ -78,6 +81,8 @@ vi.mock('node:fs/promises', () => ({
   default: {
     chmod: fsChmodMock,
     mkdir: fsMkdirMock,
+    mkdtemp: fsMkdtempMock,
+    rm: fsRmMock,
     writeFile: fsWriteFileMock
   }
 }))
@@ -201,6 +206,8 @@ describe('registerClipboardHandlers', () => {
     fsMkdirMock.mockResolvedValue(undefined)
     fsChmodMock.mockReset()
     fsChmodMock.mockResolvedValue(undefined)
+    fsMkdtempMock.mockReset()
+    fsMkdtempMock.mockResolvedValue('/tmp/orca-clipboard-images-private')
     fsReaddirMock.mockReset()
     fsReaddirMock.mockResolvedValue([])
     fsRmMock.mockReset()
@@ -561,7 +568,7 @@ describe('registerClipboardHandlers', () => {
     const png = Buffer.from([0, 1, 2, 3])
     const expectedPath = join(
       '/tmp',
-      'orca-clipboard-images',
+      'orca-clipboard-images-private',
       'orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
     )
     clipboardReadImageMock.mockReturnValue({
@@ -576,12 +583,11 @@ describe('registerClipboardHandlers', () => {
     await expect(
       handlers.get('clipboard:saveImageAsTempFile')?.(makeClipboardEvent(), undefined)
     ).resolves.toBe(expectedPath)
-    expect(fsMkdirMock).toHaveBeenCalledWith(join('/tmp', 'orca-clipboard-images'), {
-      recursive: true,
-      mode: 0o700
+    expect(fsMkdtempMock).toHaveBeenCalledWith(join('/tmp', 'orca-clipboard-images-'))
+    expect(fsWriteFileMock).toHaveBeenCalledWith(expectedPath, png, {
+      flag: 'wx',
+      mode: 0o600
     })
-    expect(fsChmodMock).toHaveBeenCalledWith(join('/tmp', 'orca-clipboard-images'), 0o700)
-    expect(fsWriteFileMock).toHaveBeenCalledWith(expectedPath, png, { mode: 0o600 })
     expect(clipboardReadBufferMock).not.toHaveBeenCalled()
     expect(fsOpenMock).not.toHaveBeenCalled()
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
@@ -701,7 +707,7 @@ describe('registerClipboardHandlers', () => {
     ).resolves.toEqual({
       path: '/tmp/orca-paste-remote.png',
       previewSrc:
-        '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
+        '/tmp/orca-clipboard-images-private/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
     })
     expect(callRuntimeEnvironmentMock.mock.calls.map(([, , method]) => method)).toEqual([
       'clipboard.startImageUpload',
@@ -710,12 +716,12 @@ describe('registerClipboardHandlers', () => {
       'clipboard.commitImageUpload'
     ])
     expect(fsWriteFileMock).toHaveBeenCalledWith(
-      '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png',
+      '/tmp/orca-clipboard-images-private/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png',
       png,
-      { mode: 0o600 }
+      { flag: 'wx', mode: 0o600 }
     )
     expect(resolveAuthorizedPathMock).toHaveBeenCalledWith(
-      '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
+      '/tmp/orca-clipboard-images-private/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
     )
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
   })

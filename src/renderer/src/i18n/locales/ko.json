@@ -14548,7 +14548,7 @@
         "terminalPlaceholder": "명령어나 프롬프트를 입력하세요…",
         "sendFailed": "터미널 입력을 보내지 못했습니다.",
         "sendPartial": "입력 일부가 붙여넣어졌습니다. 다시 시도하기 전에 터미널을 확인하세요.",
-        "hint": "Enter로 보내기 · Shift+Enter로 줄 바꿈",
+        "hint": "Enter로 보내기 · {{value0}}로 줄 바꿈",
         "shortcutHint": "로 닫기",
         "send": "터미널로 보내기",
         "loadingFiles": "파일 불러오는 중…",
