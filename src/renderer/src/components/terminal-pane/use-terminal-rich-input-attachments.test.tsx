@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act, createElement, useEffect } from 'react'
+import { Editor } from '@tiptap/core'
+import StarterKit from '@tiptap/starter-kit'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { joinPath } from '@/lib/path'
-import { clearTerminalRichInputAttachmentCacheForTests } from './terminal-rich-input-attachment-cache'
 import { useTerminalRichInputAttachments } from './use-terminal-rich-input-attachments'
 
 vi.mock('@/i18n/i18n', () => ({
@@ -11,13 +12,26 @@ vi.mock('@/i18n/i18n', () => ({
 }))
 
 type ProbeApi = ReturnType<typeof useTerminalRichInputAttachments>
+type OnAttachmentsAdded = Parameters<
+  typeof useTerminalRichInputAttachments
+>[0]['onAttachmentsAdded']
 
-function Probe({ onReady }: { onReady: (api: ProbeApi) => void }): React.JSX.Element {
+const noopAttachmentsAdded: OnAttachmentsAdded = () => {}
+
+function Probe({
+  onReady,
+  onAttachmentsAdded = noopAttachmentsAdded
+}: {
+  onReady: (api: ProbeApi) => void
+  onAttachmentsAdded?: OnAttachmentsAdded
+}): React.JSX.Element {
   const api = useTerminalRichInputAttachments({
     scopeKey: 'tab:leaf',
+    initialContent: { type: 'doc', content: [{ type: 'paragraph' }] },
     connectionId: null,
     runtimeEnvironmentId: null,
     focusEditor: () => {},
+    onAttachmentsAdded,
     enabled: true
   })
   useEffect(() => {
@@ -26,11 +40,18 @@ function Probe({ onReady }: { onReady: (api: ProbeApi) => void }): React.JSX.Ele
   return createElement('div')
 }
 
-async function renderProbe(): Promise<{ root: Root; latest: () => ProbeApi }> {
+async function renderProbe(
+  onAttachmentsAdded?: OnAttachmentsAdded
+): Promise<{ root: Root; latest: () => ProbeApi }> {
   const root = createRoot(document.createElement('div'))
   let api: ProbeApi | null = null
   await act(async () => {
-    root.render(createElement(Probe, { onReady: (next: ProbeApi) => (api = next) }))
+    root.render(
+      createElement(Probe, {
+        onReady: (next: ProbeApi) => (api = next),
+        onAttachmentsAdded
+      })
+    )
   })
   return {
     root,
@@ -45,20 +66,14 @@ async function renderProbe(): Promise<{ root: Root; latest: () => ProbeApi }> {
 
 describe('useTerminalRichInputAttachments', () => {
   afterEach(() => {
-    clearTerminalRichInputAttachmentCacheForTests()
     vi.restoreAllMocks()
   })
 
   it('does not block or persist anything for a speculative text-clipboard probe', async () => {
-    const saveClipboardImageAsTempFile = vi.fn()
+    const saveClipboardImageAsTempFile = vi.fn().mockResolvedValue(null)
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: {
-        ui: {
-          readClipboardImageDataUrl: vi.fn().mockResolvedValue(null),
-          saveClipboardImageAsTempFile
-        }
-      }
+      value: { ui: { saveClipboardImageAsTempFile } }
     })
     const probe = await renderProbe()
 
@@ -68,21 +83,20 @@ describe('useTerminalRichInputAttachments', () => {
       await Promise.resolve()
     })
 
-    expect(saveClipboardImageAsTempFile).not.toHaveBeenCalled()
+    expect(saveClipboardImageAsTempFile).toHaveBeenCalledOnce()
     expect(probe.latest().attachmentBusy).toBe(false)
     expect(probe.latest().attachments).toEqual([])
     probe.root.unmount()
   })
 
-  it('upgrades an in-flight keydown probe when the image paste event confirms it', async () => {
-    let resolvePreview: (value: string | null) => void = () => {}
-    const readClipboardImageDataUrl = vi.fn(
-      () => new Promise<string | null>((resolve) => (resolvePreview = resolve))
+  it('coalesces an in-flight keydown save with the confirming paste event', async () => {
+    let resolveSave: (value: string | null) => void = () => {}
+    const saveClipboardImageAsTempFile = vi.fn(
+      () => new Promise<string | null>((resolve) => (resolveSave = resolve))
     )
-    const saveClipboardImageAsTempFile = vi.fn().mockResolvedValue('/tmp/confirmed.png')
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { ui: { readClipboardImageDataUrl, saveClipboardImageAsTempFile } }
+      value: { ui: { saveClipboardImageAsTempFile } }
     })
     const probe = await renderProbe()
     const preventDefault = vi.fn()
@@ -96,7 +110,7 @@ describe('useTerminalRichInputAttachments', () => {
           preventDefault
         })
       ).toBe(true)
-      resolvePreview(null)
+      resolveSave('/tmp/confirmed.png')
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -107,52 +121,162 @@ describe('useTerminalRichInputAttachments', () => {
     probe.root.unmount()
   })
 
-  it('turns a clipboard image temp file into a removable pending attachment', async () => {
-    const saveClipboardImageAsTempFile = vi.fn().mockResolvedValue('/tmp/orca-paste-1.png')
-    const readClipboardImageDataUrl = vi.fn().mockResolvedValue('data:image/png;base64,AAAA')
+  it('inserts a clipboard image at the captured editor position', async () => {
+    const onAttachmentsAdded = vi.fn()
+    const saveClipboardImageAsTempFile = vi.fn().mockResolvedValue({
+      path: '/runtime/tmp/orca-paste-1.png',
+      previewSrc: '/local/tmp/orca-paste-1.png'
+    })
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { ui: { readClipboardImageDataUrl, saveClipboardImageAsTempFile } }
+      value: { ui: { saveClipboardImageAsTempFile } }
     })
-    const probe = await renderProbe()
+    const probe = await renderProbe(onAttachmentsAdded)
 
     await act(async () => {
-      probe.latest().pasteImageFromClipboard()
+      probe.latest().pasteImageFromClipboard(false, 7)
       await Promise.resolve()
       await Promise.resolve()
     })
 
     expect(saveClipboardImageAsTempFile).toHaveBeenCalledWith({
       connectionId: undefined,
-      runtimeEnvironmentId: undefined
+      runtimeEnvironmentId: undefined,
+      includeLocalPreview: true
     })
     expect(probe.latest().attachments).toEqual([
       {
         id: expect.any(String),
-        path: '/tmp/orca-paste-1.png',
-        previewSrc: 'data:image/png;base64,AAAA'
+        path: '/runtime/tmp/orca-paste-1.png',
+        previewSrc: '/local/tmp/orca-paste-1.png'
       }
     ])
+    expect(onAttachmentsAdded).toHaveBeenCalledWith(probe.latest().attachments, 7)
 
-    await act(async () => probe.latest().removeAttachment(probe.latest().attachments[0].id))
+    await act(async () => probe.latest().syncAttachments([]))
     expect(probe.latest().attachments).toEqual([])
     probe.root.unmount()
   })
 
-  it('removes only attachments included in a completed submission', async () => {
+  it('maps a pending image paste through intervening editor transactions', async () => {
+    let resolveSave: (value: string | null) => void = () => {}
+    const saveClipboardImageAsTempFile = vi.fn(
+      () => new Promise<string | null>((resolve) => (resolveSave = resolve))
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ui: { saveClipboardImageAsTempFile } }
+    })
+    const onAttachmentsAdded = vi.fn<OnAttachmentsAdded>()
+    const probe = await renderProbe(onAttachmentsAdded)
+
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: '<p>abcdefgh</p>'
+    })
+    const transaction = editor.state.tr.insertText('more', 1)
+
+    await act(async () => {
+      probe.latest().pasteImageFromClipboard(true, 7)
+      probe.latest().mapPendingInsertionPositions(transaction.mapping)
+      editor.view.dispatch(transaction)
+      resolveSave('/tmp/mapped.png')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onAttachmentsAdded).toHaveBeenCalledWith(probe.latest().attachments, 11)
+    editor.destroy()
+    probe.root.unmount()
+  })
+
+  it('queues consecutive confirmed image pastes', async () => {
+    const saveClipboardImageAsTempFile = vi
+      .fn()
+      .mockResolvedValueOnce('/tmp/first.png')
+      .mockResolvedValueOnce('/tmp/second.png')
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ui: { saveClipboardImageAsTempFile } }
+    })
+    const onAttachmentsAdded = vi.fn<OnAttachmentsAdded>()
+    const probe = await renderProbe(onAttachmentsAdded)
+    const pasteEvent = () => ({
+      clipboardData: { items: [], getData: () => '' } as unknown as DataTransfer,
+      defaultPrevented: false,
+      preventDefault: vi.fn()
+    })
+
+    await act(async () => {
+      probe.latest().handlePaste(pasteEvent(), 5)
+      probe.latest().handlePaste(pasteEvent(), 5)
+      await vi.waitFor(() => expect(saveClipboardImageAsTempFile).toHaveBeenCalledTimes(2))
+    })
+
+    expect(probe.latest().attachments.map((attachment) => attachment.path)).toEqual([
+      '/tmp/first.png',
+      '/tmp/second.png'
+    ])
+    expect(onAttachmentsAdded.mock.calls.map(([, position]) => position)).toEqual([5, 7])
+    probe.root.unmount()
+  })
+
+  it('does not double-shift queued pastes after the completed insertion', async () => {
+    const saveClipboardImageAsTempFile = vi
+      .fn()
+      .mockResolvedValueOnce('/tmp/first.png')
+      .mockResolvedValueOnce('/tmp/second.png')
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ui: { saveClipboardImageAsTempFile } }
+    })
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: '<p>abcdefghijkl</p>'
+    })
+    let latest: () => ProbeApi = () => {
+      throw new Error('Probe not ready')
+    }
+    const onAttachmentsAdded = vi.fn<OnAttachmentsAdded>((_attachments, position) => {
+      if (onAttachmentsAdded.mock.calls.length !== 1 || position === undefined) {
+        return
+      }
+      const transaction = editor.state.tr.insertText('x', position)
+      latest().mapPendingInsertionPositions(transaction.mapping)
+      editor.view.dispatch(transaction)
+    })
+    const probe = await renderProbe(onAttachmentsAdded)
+    latest = probe.latest
+    const pasteEvent = () => ({
+      clipboardData: { items: [], getData: () => '' } as unknown as DataTransfer,
+      defaultPrevented: false,
+      preventDefault: vi.fn()
+    })
+
+    await act(async () => {
+      probe.latest().handlePaste(pasteEvent(), 5)
+      probe.latest().handlePaste(pasteEvent(), 8)
+      await vi.waitFor(() => expect(saveClipboardImageAsTempFile).toHaveBeenCalledTimes(2))
+    })
+
+    expect(onAttachmentsAdded.mock.calls.map(([, position]) => position)).toEqual([5, 9])
+    editor.destroy()
+    probe.root.unmount()
+  })
+
+  it('tracks exact editor attachment order and restores undone deletions', async () => {
     const probe = await renderProbe()
     const firstPath = joinPath('tmp', 'first.png')
     const secondPath = joinPath('tmp', 'second.png')
-    const addedWhileSendingPath = joinPath('tmp', 'added-while-sending.png')
     await act(async () => probe.latest().appendImagePaths([firstPath, secondPath]))
-    const submittedIds = probe.latest().attachments.map((attachment) => attachment.id)
+    const first = probe.latest().attachments[0]!
+    const second = probe.latest().attachments[1]!
 
-    await act(async () => probe.latest().appendImagePaths([addedWhileSendingPath]))
-    await act(async () => probe.latest().removeAttachments(submittedIds))
+    await act(async () => probe.latest().syncAttachments([second]))
+    expect(probe.latest().attachments).toEqual([second])
 
-    expect(probe.latest().attachments.map((attachment) => attachment.path)).toEqual([
-      addedWhileSendingPath
-    ])
+    await act(async () => probe.latest().syncAttachments([second, first]))
+    expect(probe.latest().attachments).toEqual([second, first])
     probe.root.unmount()
   })
 })

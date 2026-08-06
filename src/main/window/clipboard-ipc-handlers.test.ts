@@ -12,8 +12,8 @@ const {
   spawnMock,
   childStdinEndMock,
   resolveAuthorizedPathMock,
-  authorizeExternalPathMock,
   fsMkdirMock,
+  fsChmodMock,
   fsReaddirMock,
   fsRmMock,
   fsWriteFileMock,
@@ -46,8 +46,8 @@ const {
     return child
   }),
   resolveAuthorizedPathMock: vi.fn(),
-  authorizeExternalPathMock: vi.fn(),
   fsMkdirMock: vi.fn(),
+  fsChmodMock: vi.fn(),
   fsReaddirMock: vi.fn(),
   fsRmMock: vi.fn(),
   fsWriteFileMock: vi.fn(),
@@ -76,6 +76,8 @@ vi.mock('node:fs/promises', () => ({
   open: fsOpenMock,
   stat: fsStatMock,
   default: {
+    chmod: fsChmodMock,
+    mkdir: fsMkdirMock,
     writeFile: fsWriteFileMock
   }
 }))
@@ -85,7 +87,7 @@ vi.mock('../ipc/filesystem-auth', () => ({
     'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.',
   isENOENT: (error: unknown): boolean =>
     error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT',
-  authorizeExternalPath: authorizeExternalPathMock,
+  authorizeExternalPath: resolveAuthorizedPathMock,
   resolveAuthorizedPath: resolveAuthorizedPathMock
 }))
 
@@ -197,6 +199,8 @@ describe('registerClipboardHandlers', () => {
     resolveAuthorizedPathMock.mockImplementation(async (path: string) => path)
     fsMkdirMock.mockReset()
     fsMkdirMock.mockResolvedValue(undefined)
+    fsChmodMock.mockReset()
+    fsChmodMock.mockResolvedValue(undefined)
     fsReaddirMock.mockReset()
     fsReaddirMock.mockResolvedValue([])
     fsRmMock.mockReset()
@@ -546,7 +550,6 @@ describe('registerClipboardHandlers', () => {
 
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readSelectionText')
-    expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:readImageDataUrl')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeSelectionText')
     expect(removeHandlerMock).toHaveBeenCalledWith('clipboard:writeImage')
@@ -558,6 +561,7 @@ describe('registerClipboardHandlers', () => {
     const png = Buffer.from([0, 1, 2, 3])
     const expectedPath = join(
       '/tmp',
+      'orca-clipboard-images',
       'orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
     )
     clipboardReadImageMock.mockReturnValue({
@@ -572,10 +576,14 @@ describe('registerClipboardHandlers', () => {
     await expect(
       handlers.get('clipboard:saveImageAsTempFile')?.(makeClipboardEvent(), undefined)
     ).resolves.toBe(expectedPath)
-    expect(fsWriteFileMock).toHaveBeenCalledWith(expectedPath, png)
+    expect(fsMkdirMock).toHaveBeenCalledWith(join('/tmp', 'orca-clipboard-images'), {
+      recursive: true,
+      mode: 0o700
+    })
+    expect(fsChmodMock).toHaveBeenCalledWith(join('/tmp', 'orca-clipboard-images'), 0o700)
+    expect(fsWriteFileMock).toHaveBeenCalledWith(expectedPath, png, { mode: 0o600 })
     expect(clipboardReadBufferMock).not.toHaveBeenCalled()
     expect(fsOpenMock).not.toHaveBeenCalled()
-    expect(authorizeExternalPathMock).toHaveBeenCalledWith(expectedPath)
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
   })
 
@@ -687,50 +695,28 @@ describe('registerClipboardHandlers', () => {
     const handlers = getRegisteredHandlers()
     await expect(
       handlers.get('clipboard:saveImageAsTempFile')?.(makeClipboardEvent(), {
-        runtimeEnvironmentId: 'remote-host-1'
+        runtimeEnvironmentId: 'remote-host-1',
+        includeLocalPreview: true
       })
-    ).resolves.toBe('/tmp/orca-paste-remote.png')
-    expect(callRuntimeEnvironmentMock).toHaveBeenNthCalledWith(
-      1,
-      '/tmp',
-      'remote-host-1',
+    ).resolves.toEqual({
+      path: '/tmp/orca-paste-remote.png',
+      previewSrc:
+        '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
+    })
+    expect(callRuntimeEnvironmentMock.mock.calls.map(([, , method]) => method)).toEqual([
       'clipboard.startImageUpload',
-      { expectedBase64Length: contentBase64.length, connectionId: null },
-      30_000
-    )
-    expect(callRuntimeEnvironmentMock).toHaveBeenNthCalledWith(
-      2,
-      '/tmp',
-      'remote-host-1',
       'clipboard.appendImageUploadChunk',
-      {
-        uploadId: 'upload-1',
-        offset: 0,
-        contentBase64: contentBase64.slice(0, 512 * 1024)
-      },
-      30_000
-    )
-    expect(callRuntimeEnvironmentMock).toHaveBeenNthCalledWith(
-      3,
-      '/tmp',
-      'remote-host-1',
       'clipboard.appendImageUploadChunk',
-      {
-        uploadId: 'upload-1',
-        offset: 512 * 1024,
-        contentBase64: contentBase64.slice(512 * 1024, 1024 * 1024)
-      },
-      30_000
+      'clipboard.commitImageUpload'
+    ])
+    expect(fsWriteFileMock).toHaveBeenCalledWith(
+      '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png',
+      png,
+      { mode: 0o600 }
     )
-    expect(callRuntimeEnvironmentMock).toHaveBeenNthCalledWith(
-      4,
-      '/tmp',
-      'remote-host-1',
-      'clipboard.commitImageUpload',
-      { uploadId: 'upload-1' },
-      30_000
+    expect(resolveAuthorizedPathMock).toHaveBeenCalledWith(
+      '/tmp/orca-clipboard-images/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
     )
-    expect(fsWriteFileMock).not.toHaveBeenCalled()
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
   })
 

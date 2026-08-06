@@ -1,10 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
+import { TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER } from './terminal-rich-input-model'
 import { removeWrittenTerminalRichInputContent } from './terminal-rich-input-submit-reconcile'
 
 describe('removeWrittenTerminalRichInputContent', () => {
-  it('removes only attachment and text stages that already reached the PTY', () => {
-    const removeAttachment = vi.fn()
-    const clearContent = vi.fn()
+  it('removes written text and images while preserving unsent inline attachments', () => {
+    const setContent = vi.fn()
+    const editor = {
+      getJSON: () => ({
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'Fix this ' },
+              { type: 'terminalImageAttachment', attrs: { id: 'first' } },
+              { type: 'terminalImageAttachment', attrs: { id: 'second' } }
+            ]
+          }
+        ]
+      }),
+      commands: { setContent }
+    } as never
 
     removeWrittenTerminalRichInputContent(
       { status: 'partially-written', imagePathsWritten: 1, textWritten: true },
@@ -12,12 +28,22 @@ describe('removeWrittenTerminalRichInputContent', () => {
         { id: 'first', path: '/tmp/first.png' },
         { id: 'second', path: '/tmp/second.png' }
       ],
-      { commands: { clearContent } } as never,
-      removeAttachment
+      editor
     )
-
-    expect(removeAttachment).toHaveBeenCalledOnce()
-    expect(removeAttachment).toHaveBeenCalledWith('first')
-    expect(clearContent).toHaveBeenCalledOnce()
+    expect(setContent).toHaveBeenCalledWith(
+      {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'terminalImageAttachment', attrs: { id: 'second' } },
+              { type: 'text', text: TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER }
+            ]
+          }
+        ]
+      },
+      { emitUpdate: true }
+    )
   })
 })

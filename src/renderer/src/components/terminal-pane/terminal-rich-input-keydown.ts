@@ -1,5 +1,7 @@
 import type { RefObject } from 'react'
+import type { Editor } from '@tiptap/react'
 import type { SlashCommandSuggestion } from '../../../../shared/native-chat-slash-commands'
+import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import type { TerminalRichInputQuery } from './terminal-rich-input-autocomplete'
 
 type TerminalRichInputKeydownContext = {
@@ -10,6 +12,7 @@ type TerminalRichInputKeydownContext = {
   activeSuggestionRef: RefObject<number>
   setActiveSuggestion: (update: (index: number) => number) => void
   pasteImageFromClipboard: () => void
+  insertHardBreak: () => boolean
   chooseFile: (path: string) => void
   chooseSlash: (command: SlashCommandSuggestion, submit: boolean) => void
   closeAutocomplete: () => void
@@ -17,14 +20,27 @@ type TerminalRichInputKeydownContext = {
   submit: () => void
 }
 
+export function insertTerminalRichInputHardBreak(editor: Editor): boolean {
+  if (!editor.commands.setHardBreak()) {
+    return false
+  }
+  const { doc, selection } = editor.state
+  if (selection.empty && selection.to >= doc.content.size - 1) {
+    editor.view.dom.scrollTop = editor.view.dom.scrollHeight
+  } else {
+    editor.commands.scrollIntoView()
+  }
+  return true
+}
+
 export function handleTerminalRichInputKeyDown(
   event: KeyboardEvent,
   context: TerminalRichInputKeydownContext
 ): boolean {
-  if (event.isComposing) {
+  if (event.isComposing || event.keyCode === 229) {
     return false
   }
-  const pasteModifier = navigator.userAgent.includes('Mac') ? event.metaKey : event.ctrlKey
+  const pasteModifier = getShortcutPlatform() === 'darwin' ? event.metaKey : event.ctrlKey
   if (event.key.toLowerCase() === 'v' && pasteModifier) {
     // Native Electron image clipboards can omit the DOM paste payload. Probe
     // first, but the attachment hook does not block text paste unless an image exists.
@@ -62,10 +78,17 @@ export function handleTerminalRichInputKeyDown(
       return true
     }
   }
+  if (event.key === 'Enter' && event.shiftKey) {
+    const handled = context.insertHardBreak()
+    if (handled) {
+      event.preventDefault()
+    }
+    return handled
+  }
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
-    if (currentMention || currentSlash) {
+    if (currentMention || (currentSlash && slashSuggestions.length > 0)) {
       context.closeAutocomplete()
     } else {
       context.closeComposer()

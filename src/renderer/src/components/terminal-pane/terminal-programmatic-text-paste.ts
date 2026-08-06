@@ -2,6 +2,7 @@ import type { PasteTerminalTextDetail } from '@/constants/terminal'
 import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { getConnectionId } from '@/lib/connection-context'
+import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { pasteTerminalText } from './terminal-bracketed-paste'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import { executeTerminalPastePlan, planTerminalPasteWithYield } from './terminal-paste-coordinator'
@@ -121,11 +122,4 @@ export function handleTerminalProgrammaticTextPaste({
     getPaneTransports,
     focusAfterPaste: true
   })
-}
-
-function getShortcutPlatform(userAgent = globalThis.navigator?.userAgent ?? ''): NodeJS.Platform {
-  if (userAgent.includes('Mac')) {
-    return 'darwin'
-  }
-  return userAgent.includes('Windows') ? 'win32' : 'linux'
 }

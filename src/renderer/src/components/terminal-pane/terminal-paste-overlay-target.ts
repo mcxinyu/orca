@@ -4,7 +4,6 @@ const TERMINAL_PASTE_OVERLAY_SELECTOR = [
   '.terminal-rich-input-dock'
 ].join(',')
 
-/** Whether a higher-level terminal editor owns paste instead of the raw PTY. */
 export function terminalPasteIsOwnedByOverlay(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(TERMINAL_PASTE_OVERLAY_SELECTOR) !== null
 }

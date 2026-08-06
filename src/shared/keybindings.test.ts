@@ -1111,6 +1111,20 @@ describe('keybindings', () => {
     ).toBe(true)
   })
 
+  it('keeps the rich input toggle configurable across platforms', () => {
+    expect(getEffectiveKeybindingsForAction('terminal.richInput.toggle', 'darwin')).toEqual([
+      'Mod+I'
+    ])
+    expect(getEffectiveKeybindingsForAction('terminal.richInput.toggle', 'linux')).toEqual([
+      'Ctrl+Shift+M'
+    ])
+    expect(
+      getEffectiveKeybindingsForAction('terminal.richInput.toggle', 'darwin', {
+        'terminal.richInput.toggle': ['Alt+R']
+      })
+    ).toEqual(['Alt+R'])
+  })
+
   it('keeps the existing terminal paste defaults on Windows and Linux', () => {
     expect(getEffectiveKeybindingsForAction('terminal.paste', 'darwin')).toEqual(['Mod+V'])
     expect(getEffectiveKeybindingsForAction('terminal.paste', 'linux')).toEqual([

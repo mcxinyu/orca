@@ -10,9 +10,16 @@ import { assertClipboardImageByteLengthWithinLimit } from '../../shared/clipboar
 export type SaveClipboardImageAsTempFileArgs = {
   connectionId?: string | null
   runtimeEnvironmentId?: string | null
+  includeLocalPreview?: boolean
+}
+
+export type SavedClipboardImage = {
+  path: string
+  previewSrc?: string
 }
 
 const REMOTE_CLIPBOARD_IMAGE_TEMP_DIR = '/tmp'
+const LOCAL_CLIPBOARD_IMAGE_TEMP_DIR = 'orca-clipboard-images'
 
 function joinRemotePath(basePath: string, fileName: string): string {
   if (isWindowsAbsolutePathLike(basePath)) {
@@ -39,7 +46,10 @@ export async function saveClipboardImageBufferAsTempFile(
     return remotePath
   }
 
-  const tempPath = path.join(app.getPath('temp'), fileName)
-  await fs.writeFile(tempPath, buffer)
+  const tempDir = path.join(app.getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR)
+  await fs.mkdir(tempDir, { recursive: true, mode: 0o700 })
+  await fs.chmod(tempDir, 0o700).catch(() => {})
+  const tempPath = path.join(tempDir, fileName)
+  await fs.writeFile(tempPath, buffer, { mode: 0o600 })
   return tempPath
 }

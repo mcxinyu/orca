@@ -601,17 +601,8 @@
   border-color: var(--border);
 }
 
-.pane-manager-root [data-terminal-rich-input-card] {
-  border-color: var(--input);
-}
-
-.pane-manager-root [data-terminal-rich-input-card]:focus-within {
-  border-color: var(--ring);
-}
-
 .pane-manager-root [data-terminal-rich-input-menu],
 .pane-manager-root [data-terminal-rich-input-mention],
-.pane-manager-root [data-terminal-rich-input-attachment],
 .pane-manager-root [data-terminal-rich-input-send] {
   border-color: var(--border);
 }
@@ -621,6 +612,34 @@
   overflow-wrap: anywhere;
 }
 
-.terminal-rich-input-editor .ProseMirror-selectednode [data-terminal-rich-input-mention] {
-  box-shadow: 0 0 0 1px var(--ring);
+.terminal-rich-input-range-selected [data-terminal-rich-input-mention] > span,
+.terminal-rich-input-range-selected [data-terminal-rich-input-image-attachment] > span {
+  border-color: Highlight;
+  background: Highlight;
+}
+
+.terminal-rich-input-block-selected {
+  width: fit-content;
+  max-width: 100%;
+  background: color-mix(in srgb, Highlight 34%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, Highlight 34%, transparent);
+}
+
+.terminal-rich-input-block-selected
+  .terminal-rich-input-range-selected
+  [data-terminal-rich-input-mention]
+  > span,
+.terminal-rich-input-block-selected
+  .terminal-rich-input-range-selected
+  [data-terminal-rich-input-image-attachment]
+  > span {
+  border-color: Highlight;
+  background: color-mix(in srgb, var(--background) 38%, transparent);
+}
+
+.terminal-rich-input-range-selected ::selection,
+.terminal-rich-input-block-selected::selection,
+.terminal-rich-input-block-selected *::selection {
+  color: inherit;
+  background: transparent;
 }

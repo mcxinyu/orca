@@ -76,10 +76,12 @@ import {
   clearPaneTitleOverlayRects
 } from './pane-title-overlay-rects'
 import { TerminalRichInput } from './TerminalRichInput'
+import { resolveTerminalDropTargetShell } from './terminal-drop-shell'
 import {
   submitTerminalRichInput,
   type TerminalRichInputSubmitResult
 } from './terminal-rich-input-submit'
+import type { AgentType } from '../../../../shared/agent-status-types'
 import NativeChatView from '../native-chat/NativeChatView'
 import { splitTerminalPaneWithInheritedCwd } from './terminal-pane-split-with-inherited-cwd'
 import { TerminalAgentSessionForkDialog } from './TerminalAgentSessionForkDialog'
@@ -2851,7 +2853,7 @@ function TerminalPane(
     isChatViewMode && activePane?.leafId && activePane.leafId === chatLeafId
   )
   // A split can host different agents, so continuation resolves the specific leaf before using tab-wide hints.
-  const resolveAgentForLeaf = (leafId: string | null): string | null => {
+  const resolveAgentForLeaf = (leafId: string | null): AgentType | null => {
     const detectedAgent = leafId ? (tabAgentTypeByLeaf[leafId] ?? null) : null
     if (detectedAgent) {
       return detectedAgent
@@ -2865,9 +2867,17 @@ function TerminalPane(
       }) ?? resolveTitleAgentForLeaf(leafId)
     )
   }
-  const activePaneCanContinueInNewSession = canContinueAgentSessionInNewSession(
-    resolveAgentForLeaf(activePane?.leafId ?? null)
-  )
+  const activePaneRichInputAgent = resolveAgentForLeaf(activePane?.leafId ?? null)
+  const activePaneConnectionId = activePaneTransport?.getConnectionId?.() ?? null
+  const activePaneRuntimeEnvironmentId = activePaneTransport?.getRuntimeEnvironmentId?.() ?? null
+  const activePaneTargetShell = resolveTerminalDropTargetShell({
+    activeRuntimeEnvironmentId: activePaneRuntimeEnvironmentId,
+    worktreePath: cwd,
+    connectionId: activePaneConnectionId,
+    remotePlatform: getTerminalPasteSshRemotePlatform(activePaneConnectionId)
+  })
+  const activePaneCanContinueInNewSession =
+    canContinueAgentSessionInNewSession(activePaneRichInputAgent)
   const contextMenuCanContinueInNewSession = canContinueAgentSessionInNewSession(
     resolveAgentForLeaf(contextMenuLeafId)
   )
@@ -2993,11 +3003,11 @@ function TerminalPane(
               pane={activePane}
               scopeKey={`${tabId}:${activePane.leafId}`}
               worktreeId={worktreeId}
-              agent={
-                tabAgentTypeByLeaf[activePane.leafId] ?? resolveTitleAgentForLeaf(activePane.leafId)
-              }
-              connectionId={activePaneTransport?.getConnectionId?.() ?? null}
-              runtimeEnvironmentId={activePaneTransport?.getRuntimeEnvironmentId?.() ?? null}
+              worktreePath={cwd ?? ''}
+              agent={activePaneRichInputAgent}
+              connectionId={activePaneConnectionId}
+              runtimeEnvironmentId={activePaneRuntimeEnvironmentId}
+              targetShell={activePaneTargetShell}
               onClose={closeRichInput}
               onSubmit={(text, imagePaths) => submitRichInputForPane(activePane, text, imagePaths)}
             />,

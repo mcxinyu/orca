@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { ManagedPane } from '@/lib/pane-manager/pane-manager'
 import { requestPaneTuiRepaint } from '@/lib/pane-manager/pane-tui-repaint-request'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
@@ -14,6 +14,7 @@ export function useTerminalRichInputAnimation({
   pane: ManagedPane
 }): { layoutOpen: boolean } {
   const [layoutOpen, setLayoutOpen] = useState(open)
+  const hasMeasuredLayout = useRef(false)
   const prefersReducedMotion = usePrefersReducedMotion()
 
   useLayoutEffect(() => {
@@ -33,6 +34,12 @@ export function useTerminalRichInputAnimation({
   }, [open, prefersReducedMotion])
 
   useLayoutEffect(() => {
+    if (!hasMeasuredLayout.current) {
+      hasMeasuredLayout.current = true
+      if (!layoutOpen) {
+        return
+      }
+    }
     if (layoutOpen !== open) {
       return
     }

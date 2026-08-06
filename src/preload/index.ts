@@ -4042,12 +4042,12 @@ const api = {
       ipcRenderer.invoke('clipboard:readText', options),
     readSelectionClipboardText: (options?: ReadClipboardTextOptions): Promise<string> =>
       ipcRenderer.invoke('clipboard:readSelectionText', options),
-    readClipboardImageDataUrl: (): Promise<string | null> =>
-      ipcRenderer.invoke('clipboard:readImageDataUrl'),
     saveClipboardImageAsTempFile: (args?: {
       connectionId?: string | null
       runtimeEnvironmentId?: string | null
-    }): Promise<string | null> => ipcRenderer.invoke('clipboard:saveImageAsTempFile', args),
+      includeLocalPreview?: boolean
+    }): Promise<string | { path: string; previewSrc?: string } | null> =>
+      ipcRenderer.invoke('clipboard:saveImageAsTempFile', args),
     writeClipboardText: (text: string): Promise<void> =>
       ipcRenderer.invoke('clipboard:writeText', text),
     writeTerminalClipboardText: (text: string): Promise<void> =>

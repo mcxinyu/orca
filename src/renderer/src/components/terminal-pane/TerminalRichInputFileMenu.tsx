@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getFileTypeIcon } from '@/lib/file-type-icons'
@@ -19,6 +20,11 @@ export function TerminalRichInputFileMenu({
   activeIndex: number
   onChoose: (path: string) => void
 }): React.JSX.Element {
+  const activeOptionRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    activeOptionRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex])
+
   return (
     <div
       id={id}
@@ -45,6 +51,7 @@ export function TerminalRichInputFileMenu({
             <Button
               id={`${id}-option-${index}`}
               key={path}
+              ref={index === activeIndex ? activeOptionRef : null}
               type="button"
               variant="ghost"
               size="sm"

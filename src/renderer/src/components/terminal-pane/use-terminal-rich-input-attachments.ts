@@ -1,12 +1,13 @@
+import type { JSONContent } from '@tiptap/core'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { translate } from '@/i18n/i18n'
 import { extractIpcErrorMessage } from '@/lib/ipc-error'
-import {
-  readTerminalRichInputAttachments,
-  writeTerminalRichInputAttachments,
-  type TerminalRichInputImageAttachment
-} from './terminal-rich-input-attachment-cache'
 import { isImageDropPath } from './terminal-drop-image-path'
+import {
+  TERMINAL_RICH_INPUT_IMAGE_INSERTION_SIZE,
+  terminalRichInputImageAttachments
+} from './terminal-rich-input-model'
+import type { TerminalRichInputImageAttachment } from './terminal-rich-input-types'
 
 type ClipboardEventLike = {
   clipboardData: DataTransfer | null
@@ -16,28 +17,40 @@ type ClipboardEventLike = {
 
 export function useTerminalRichInputAttachments({
   scopeKey,
+  initialContent,
   connectionId,
   runtimeEnvironmentId,
   focusEditor,
+  onAttachmentsAdded,
   enabled
 }: {
   scopeKey: string
+  initialContent: JSONContent
   connectionId: string | null
   runtimeEnvironmentId: string | null
   focusEditor: () => void
+  onAttachmentsAdded: (
+    attachments: readonly TerminalRichInputImageAttachment[],
+    insertionPosition?: number
+  ) => void
   enabled: boolean
 }): {
   attachments: TerminalRichInputImageAttachment[]
   attachmentBusy: boolean
   attachmentPending: boolean
   notice: string | null
-  appendImagePaths: (paths: string[], previewSrc?: string) => void
-  handlePaste: (event: ClipboardEventLike) => boolean
-  removeAttachments: (ids: readonly string[]) => void
-  pasteImageFromClipboard: (confirmedImage?: boolean) => void
-  removeAttachment: (id: string) => void
+  appendImagePaths: (paths: string[], insertionPosition?: number) => void
+  handlePaste: (event: ClipboardEventLike, insertionPosition?: number) => boolean
+  mapPendingInsertionPositions: (mapping: {
+    map: (position: number, assoc?: number) => number
+  }) => void
+  syncAttachments: (attachments: readonly TerminalRichInputImageAttachment[]) => void
+  pasteImageFromClipboard: (confirmedImage?: boolean, insertionPosition?: number) => void
 } {
-  const initialAttachments = useMemo(() => readTerminalRichInputAttachments(scopeKey), [scopeKey])
+  const initialAttachments = useMemo(
+    () => terminalRichInputImageAttachments(initialContent),
+    [initialContent]
+  )
   const [attachmentState, setAttachmentState] = useState(() => ({
     scopeKey,
     attachments: initialAttachments
@@ -55,6 +68,8 @@ export function useTerminalRichInputAttachments({
   const attachmentCounter = useRef(0)
   const clipboardPasteInFlight = useRef(false)
   const clipboardPasteConfirmed = useRef(false)
+  const clipboardInsertionPosition = useRef<number | undefined>(undefined)
+  const queuedClipboardPastes = useRef<{ insertionPosition?: number }[]>([])
 
   const updateAttachments = useCallback(
     (
@@ -62,68 +77,89 @@ export function useTerminalRichInputAttachments({
     ) => {
       setAttachmentState((previous) => {
         const previousAttachments =
-          previous.scopeKey === scopeKey
-            ? previous.attachments
-            : readTerminalRichInputAttachments(scopeKey)
+          previous.scopeKey === scopeKey ? previous.attachments : initialAttachments
         const attachments = update(previousAttachments)
-        writeTerminalRichInputAttachments(scopeKey, attachments)
+        if (previous.scopeKey === scopeKey && attachments === previousAttachments) {
+          return previous
+        }
+        if (previous.scopeKey === scopeKey) {
+          syncAttachmentPreviewUrls(previousAttachments, attachments)
+        }
         return { scopeKey, attachments }
       })
     },
-    [scopeKey]
+    [initialAttachments, scopeKey]
   )
 
-  const appendImagePaths = useCallback(
-    (paths: string[], previewSrc?: string) => {
-      const images = paths.filter(isImageDropPath)
-      if (images.length === 0) {
+  const appendImageSources = useCallback(
+    (sources: readonly { path: string; previewSrc?: string }[], insertionPosition?: number) => {
+      const added = sources
+        .filter((source) => isImageDropPath(source.path))
+        .map((source) => {
+          attachmentCounter.current += 1
+          return { id: `${Date.now()}-${attachmentCounter.current}`, ...source }
+        })
+      if (added.length === 0) {
         return
       }
-      updateAttachments((previous) => [
-        ...previous,
-        ...images.map((path, index) => {
-          attachmentCounter.current += 1
-          return {
-            id: `${Date.now()}-${attachmentCounter.current}`,
-            path,
-            previewSrc: index === 0 ? previewSrc : undefined
-          }
-        })
-      ])
+      updateAttachments((previous) => [...previous, ...added])
+      onAttachmentsAdded(added, insertionPosition)
       setNotice(null)
       requestAnimationFrame(focusEditor)
     },
-    [focusEditor, setNotice, updateAttachments]
+    [focusEditor, onAttachmentsAdded, setNotice, updateAttachments]
+  )
+
+  const appendImagePaths = useCallback(
+    (paths: string[], insertionPosition?: number) =>
+      appendImageSources(
+        paths.map((path) => ({ path })),
+        insertionPosition
+      ),
+    [appendImageSources]
   )
 
   const pasteImageFromClipboard = useCallback(
-    (confirmedImage = false) => {
+    (confirmedImage = false, insertionPosition?: number) => {
       if (!enabled) {
         return
       }
       if (clipboardPasteInFlight.current) {
+        if (confirmedImage && clipboardPasteConfirmed.current) {
+          queuedClipboardPastes.current.push({ insertionPosition })
+          return
+        }
         clipboardPasteConfirmed.current ||= confirmedImage
+        clipboardInsertionPosition.current ??= insertionPosition
         return
       }
       clipboardPasteInFlight.current = true
       clipboardPasteConfirmed.current = confirmedImage
+      clipboardInsertionPosition.current = insertionPosition
       let pendingTimer: number | null = null
-      const previewPromise = window.api.ui.readClipboardImageDataUrl
-        ? window.api.ui.readClipboardImageDataUrl().catch(() => null)
-        : Promise.resolve(null)
-      void previewPromise
-        .then(async (previewSrc) => {
-          if (!previewSrc && !clipboardPasteConfirmed.current) {
-            return
-          }
-          setAttachmentBusy(true)
-          pendingTimer = window.setTimeout(() => setAttachmentPending(true), 120)
-          const path = await window.api.ui.saveClipboardImageAsTempFile({
-            connectionId: connectionId ?? undefined,
-            runtimeEnvironmentId: runtimeEnvironmentId ?? undefined
-          })
-          if (path) {
-            appendImagePaths([path], previewSrc ?? undefined)
+      setAttachmentBusy(true)
+      pendingTimer = window.setTimeout(() => setAttachmentPending(true), 120)
+      void window.api.ui
+        .saveClipboardImageAsTempFile({
+          connectionId: connectionId ?? undefined,
+          runtimeEnvironmentId: runtimeEnvironmentId ?? undefined,
+          includeLocalPreview: true
+        })
+        .then((savedImage) => {
+          if (savedImage) {
+            const insertionPosition = clipboardInsertionPosition.current
+            const source = typeof savedImage === 'string' ? { path: savedImage } : savedImage
+            appendImageSources([source], insertionPosition)
+            if (insertionPosition !== undefined) {
+              for (const queuedPaste of queuedClipboardPastes.current) {
+                if (
+                  queuedPaste.insertionPosition !== undefined &&
+                  queuedPaste.insertionPosition === insertionPosition
+                ) {
+                  queuedPaste.insertionPosition += TERMINAL_RICH_INPUT_IMAGE_INSERTION_SIZE
+                }
+              }
+            }
           }
         })
         .catch((error) => {
@@ -140,15 +176,35 @@ export function useTerminalRichInputAttachments({
           }
           clipboardPasteInFlight.current = false
           clipboardPasteConfirmed.current = false
+          clipboardInsertionPosition.current = undefined
           setAttachmentBusy(false)
           setAttachmentPending(false)
+          const nextPaste = queuedClipboardPastes.current.shift()
+          if (nextPaste) {
+            queueMicrotask(() => pasteImageFromClipboard(true, nextPaste.insertionPosition))
+          }
         })
     },
-    [appendImagePaths, connectionId, enabled, runtimeEnvironmentId, setNotice]
+    [appendImageSources, connectionId, enabled, runtimeEnvironmentId, setNotice]
+  )
+
+  const mapPendingInsertionPositions = useCallback(
+    (mapping: { map: (position: number, assoc?: number) => number }) => {
+      if (clipboardInsertionPosition.current !== undefined) {
+        clipboardInsertionPosition.current = mapping.map(clipboardInsertionPosition.current, -1)
+      }
+      queuedClipboardPastes.current = queuedClipboardPastes.current.map((paste) => ({
+        insertionPosition:
+          paste.insertionPosition === undefined
+            ? undefined
+            : mapping.map(paste.insertionPosition, -1)
+      }))
+    },
+    []
   )
 
   const handlePaste = useCallback(
-    (event: ClipboardEventLike): boolean => {
+    (event: ClipboardEventLike, insertionPosition?: number): boolean => {
       if (!enabled || event.defaultPrevented) {
         return false
       }
@@ -159,7 +215,7 @@ export function useTerminalRichInputAttachments({
         return false
       }
       event.preventDefault()
-      pasteImageFromClipboard(true)
+      pasteImageFromClipboard(true, insertionPosition)
       return true
     },
     [enabled, pasteImageFromClipboard]
@@ -172,16 +228,56 @@ export function useTerminalRichInputAttachments({
     notice,
     appendImagePaths,
     handlePaste,
+    mapPendingInsertionPositions,
     pasteImageFromClipboard,
-    removeAttachments: (ids) => {
-      const removedIds = new Set(ids)
-      updateAttachments((previous) =>
-        previous.filter((attachment) => !removedIds.has(attachment.id))
-      )
-    },
-    removeAttachment: (id) =>
-      updateAttachments((previous) => previous.filter((attachment) => attachment.id !== id))
+    syncAttachments: (next) =>
+      updateAttachments((previous) => (sameAttachments(previous, next) ? previous : [...next]))
   }
+}
+
+const pendingPreviewRevocations = new Map<string, number>()
+
+function syncAttachmentPreviewUrls(
+  previous: readonly TerminalRichInputImageAttachment[],
+  next: readonly TerminalRichInputImageAttachment[]
+): void {
+  const retained = new Set(next.flatMap(({ previewSrc }) => (previewSrc ? [previewSrc] : [])))
+  for (const previewSrc of retained) {
+    const timer = pendingPreviewRevocations.get(previewSrc)
+    if (timer !== undefined) {
+      window.clearTimeout(timer)
+      pendingPreviewRevocations.delete(previewSrc)
+    }
+  }
+  for (const { previewSrc } of previous) {
+    if (
+      !previewSrc?.startsWith('blob:') ||
+      retained.has(previewSrc) ||
+      pendingPreviewRevocations.has(previewSrc)
+    ) {
+      continue
+    }
+    const timer = window.setTimeout(() => {
+      URL.revokeObjectURL?.(previewSrc)
+      pendingPreviewRevocations.delete(previewSrc)
+    }, 30_000)
+    pendingPreviewRevocations.set(previewSrc, timer)
+  }
+}
+
+function sameAttachments(
+  left: readonly TerminalRichInputImageAttachment[],
+  right: readonly TerminalRichInputImageAttachment[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (attachment, index) =>
+        attachment.id === right[index]?.id &&
+        attachment.path === right[index]?.path &&
+        attachment.previewSrc === right[index]?.previewSrc
+    )
+  )
 }
 
 function clipboardHasImage(data: DataTransfer | null): boolean {

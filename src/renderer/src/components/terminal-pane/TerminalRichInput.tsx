@@ -1,44 +1,54 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { JSONContent } from '@tiptap/core'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import { useRuntimeFileListForWorktree } from '@/components/quick-open-file-list'
 import { prepareQuickOpenFiles, rankQuickOpenFiles } from '@/components/quick-open-search'
-import { getAgentImageHandling } from '../../../../shared/agent-image-handling'
 import {
+  applySlashSuggestion,
   filterSlashCommands,
   getAgentSlashCommands,
+  slashCommandDispatchText,
   type SlashCommandSuggestion
 } from '../../../../shared/native-chat-slash-commands'
-import { isImageDropPath } from './terminal-drop-image-path'
+import { useTerminalRichInputPathInsertion } from './use-terminal-rich-input-path-insertion'
+import {
+  getTerminalRichInputInlineImageFormatter,
+  terminalRichInputCanAttachImages
+} from './terminal-rich-input-image-support'
 import {
   readTerminalRichInputDraft,
   writeTerminalRichInputDraft
 } from './terminal-rich-input-draft'
 import {
-  TERMINAL_RICH_INPUT_FILE_MENTION_NODE,
   terminalRichInputContentToText,
-  terminalRichInputPathsToContent,
-  terminalRichInputTextToContent
+  terminalRichInputPathsToContent
 } from './terminal-rich-input-model'
+import { terminalRichInputClipboardProps } from './terminal-rich-input-clipboard'
 import { TerminalRichInputFileMention } from './TerminalRichInputFileMention'
 import { TerminalRichInputFileMenu } from './TerminalRichInputFileMenu'
-import { TerminalRichInputAttachments } from './TerminalRichInputAttachments'
+import { TerminalRichInputAttachmentPending } from './TerminalRichInputAttachmentPending'
+import { TerminalRichInputImageAttachment } from './TerminalRichInputImageAttachment'
+import { RichInputPlaceholder, richInputPlaceholder } from './RichInputPlaceholder'
 import { TerminalRichInputSlashMenu } from './TerminalRichInputSlashMenu'
 import { TerminalRichInputSendButton } from './TerminalRichInputSendButton'
 import { TerminalRichInputStatus, type TerminalRichInputSendError } from './TerminalRichInputStatus'
 import {
-  findTerminalRichInputMentionQuery,
-  findTerminalRichInputSlashQuery,
+  findTerminalRichInputAutocomplete,
+  sameTerminalRichInputAutocompleteQuery,
   type TerminalRichInputQuery
 } from './terminal-rich-input-autocomplete'
 import { useTerminalRichInputAnimation } from './use-terminal-rich-input-animation'
 import { useTerminalRichInputAutocompleteAria } from './use-terminal-rich-input-autocomplete-aria'
-import { useTerminalRichInputAttachments } from './use-terminal-rich-input-attachments'
+import { useTerminalRichInputEditorAttachments } from './use-terminal-rich-input-editor-attachments'
 import { useTerminalRichInputDrop } from './use-terminal-rich-input-drop'
-import { handleTerminalRichInputKeyDown } from './terminal-rich-input-keydown'
-import { removeWrittenTerminalRichInputContent } from './terminal-rich-input-submit-reconcile'
+import {
+  handleTerminalRichInputKeyDown,
+  insertTerminalRichInputHardBreak
+} from './terminal-rich-input-keydown'
+import { submitTerminalRichInputEditor } from './terminal-rich-input-editor-submit'
 import type { TerminalRichInputProps } from './terminal-rich-input-types'
 
 export function TerminalRichInput({
@@ -46,9 +56,11 @@ export function TerminalRichInput({
   pane,
   scopeKey,
   worktreeId,
+  worktreePath,
   agent,
   connectionId,
   runtimeEnvironmentId,
+  targetShell,
   onClose,
   onSubmit
 }: TerminalRichInputProps): React.JSX.Element {
@@ -77,30 +89,34 @@ export function TerminalRichInput({
   closeRef.current = onClose
 
   const setDraft = useCallback(
-    (next: string) => {
+    (next: string, content: JSONContent) => {
       setDraftState({ scopeKey, value: next })
-      writeTerminalRichInputDraft(scopeKey, next)
+      writeTerminalRichInputDraft(scopeKey, next, content)
     },
     [scopeKey]
   )
 
   const editorRef = useRef<Editor | null>(null)
-  const syncAutocomplete = useCallback(
-    (editor: Editor) => {
-      const nextMention = agent ? findTerminalRichInputMentionQuery(editor) : null
-      const nextSlash = agent ? findTerminalRichInputSlashQuery(editor) : null
+  const agentRef = useRef(agent)
+  agentRef.current = agent
+  const syncAutocomplete = useCallback((editor: Editor) => {
+    const { mention: nextMention, slash: nextSlash } = findTerminalRichInputAutocomplete(
+      editor,
+      agentRef.current !== null
+    )
+    const mentionChanged = !sameTerminalRichInputAutocompleteQuery(nextMention, mentionRef.current)
+    const slashChanged = !sameTerminalRichInputAutocompleteQuery(nextSlash, slashRef.current)
+    if (mentionChanged) {
       setMention(nextMention)
-      setSlash(nextMention ? null : nextSlash)
-      if (
-        nextMention?.query !== mentionRef.current?.query ||
-        nextSlash?.query !== slashRef.current?.query
-      ) {
-        setActiveSuggestion(0)
-      }
-    },
-    [agent]
-  )
-  const canAttachImages = agent ? getAgentImageHandling(agent) === 'attachment' : false
+    }
+    if (slashChanged) {
+      setSlash(nextSlash)
+    }
+    if (mentionChanged || slashChanged) {
+      setActiveSuggestion(0)
+    }
+  }, [])
+  const canAttachImages = terminalRichInputCanAttachImages(agent)
   const {
     attachments,
     attachmentBusy,
@@ -108,35 +124,48 @@ export function TerminalRichInput({
     notice: attachmentNotice,
     appendImagePaths,
     handlePaste,
+    mapPendingInsertionPositions,
     pasteImageFromClipboard,
-    removeAttachment,
-    removeAttachments
-  } = useTerminalRichInputAttachments({
+    initialContent,
+    resourceContext,
+    syncEditorAttachments
+  } = useTerminalRichInputEditorAttachments({
     scopeKey,
+    initialDraft,
+    parseFileReferences: Boolean(agent),
     connectionId,
     runtimeEnvironmentId,
-    focusEditor: () => editorRef.current?.commands.focus('end'),
+    worktreeId,
+    worktreePath,
+    editorRef,
     enabled: canAttachImages
   })
-
+  const handlePasteRef = useRef(handlePaste)
+  const pasteImageFromClipboardRef = useRef(pasteImageFromClipboard)
+  handlePasteRef.current = handlePaste
+  pasteImageFromClipboardRef.current = pasteImageFromClipboard
   const editor = useEditor(
     {
       immediatelyRender: false,
       extensions: [
         StarterKit.configure({ heading: false, blockquote: false, codeBlock: false }),
-        TerminalRichInputFileMention
+        TerminalRichInputFileMention,
+        TerminalRichInputImageAttachment
       ],
-      content: terminalRichInputTextToContent(initialDraft, Boolean(agent)),
+      content: initialContent,
       editorProps: {
+        ...terminalRichInputClipboardProps(editorRef),
         attributes: {
           'aria-label': translate('components.terminal.richInput.label', 'Rich terminal input'),
           'aria-autocomplete': 'list',
           'aria-expanded': 'false',
+          'aria-placeholder': richInputPlaceholder(agent),
           role: 'combobox',
           class:
             'terminal-rich-input-editor scrollbar-sleek min-h-12 max-h-40 overflow-y-auto px-2 py-1 text-sm outline-none'
         },
-        handlePaste: (_view, event) => handlePaste(event),
+        handlePaste: (_view, event) =>
+          handlePasteRef.current(event, editorRef.current?.state.selection.from),
         handleKeyDown: (_view, event) =>
           handleTerminalRichInputKeyDown(event, {
             mentionRef,
@@ -145,7 +174,10 @@ export function TerminalRichInput({
             slashSuggestionsRef,
             activeSuggestionRef,
             setActiveSuggestion,
-            pasteImageFromClipboard,
+            pasteImageFromClipboard: () =>
+              pasteImageFromClipboardRef.current(false, editorRef.current?.state.selection.from),
+            insertHardBreak: () =>
+              editorRef.current ? insertTerminalRichInputHardBreak(editorRef.current) : false,
             chooseFile: (path) => chooseFileRef.current(path),
             chooseSlash: (command, submit) => chooseSlashRef.current(command, submit),
             closeAutocomplete: () => {
@@ -156,17 +188,27 @@ export function TerminalRichInput({
             submit: () => submitRef.current()
           })
       },
+      onTransaction: ({ transaction }) =>
+        transaction.docChanged && mapPendingInsertionPositions(transaction.mapping),
       onUpdate: ({ editor: updatedEditor }) => {
-        const next = terminalRichInputContentToText(updatedEditor.getJSON())
-        setDraft(next)
+        const content = updatedEditor.getJSON()
+        const next = terminalRichInputContentToText(content)
+        syncEditorAttachments(content)
+        setDraft(next, content)
         setSendError(null)
         syncAutocomplete(updatedEditor)
       },
       onSelectionUpdate: ({ editor: updatedEditor }) => syncAutocomplete(updatedEditor)
     },
-    [scopeKey, agent]
+    [scopeKey]
   )
   editorRef.current = editor
+  useEffect(() => {
+    setActiveSuggestion(0)
+    if (editor) {
+      syncAutocomplete(editor)
+    }
+  }, [agent, editor, syncAutocomplete])
 
   const fileList = useRuntimeFileListForWorktree({ enabled: mention !== null, worktreeId })
   const indexedFiles = useMemo(() => prepareQuickOpenFiles(fileList.files), [fileList.files])
@@ -196,6 +238,7 @@ export function TerminalRichInput({
     slashSuggestionCount: slashSuggestions.length,
     activeSuggestion
   })
+  activeSuggestionRef.current = activeAutocompleteIndex
 
   const chooseFile = useCallback(
     (filePath: string) => {
@@ -207,15 +250,12 @@ export function TerminalRichInput({
         .chain()
         .focus()
         .deleteRange({ from: currentMention.from, to: currentMention.to })
-        .insertContent([
-          { type: TERMINAL_RICH_INPUT_FILE_MENTION_NODE, attrs: { path: filePath } },
-          { type: 'text', text: ' ' }
-        ])
+        .insertContent(terminalRichInputPathsToContent([filePath], true, resourceContext))
         .run()
       setMention(null)
       setActiveSuggestion(0)
     },
-    [editor]
+    [editor, resourceContext]
   )
   chooseFileRef.current = chooseFile
 
@@ -229,7 +269,9 @@ export function TerminalRichInput({
         .chain()
         .focus()
         .deleteRange({ from: currentSlash.from, to: currentSlash.to })
-        .insertContent(`/${command.name}${submitAfterInsert ? '' : ' '}`)
+        .insertContent(
+          submitAfterInsert ? slashCommandDispatchText(command) : applySlashSuggestion(command)
+        )
         .run()
       setSlash(null)
       setActiveSuggestion(0)
@@ -241,78 +283,41 @@ export function TerminalRichInput({
   )
   chooseSlashRef.current = chooseSlash
 
-  const insertFilePaths = useCallback(
-    (paths: string[]) => {
-      const files = paths.filter((path) => !isImageDropPath(path))
-      if (!editor || files.length === 0) {
-        return
-      }
-      editor
-        .chain()
-        .focus()
-        .insertContent(terminalRichInputPathsToContent(files, Boolean(agent)))
-        .run()
-    },
-    [agent, editor]
-  )
-
-  const insertDroppedPaths = useCallback(
-    (paths: string[]) => {
-      const images = canAttachImages ? paths.filter(isImageDropPath) : []
-      appendImagePaths(images)
-      insertFilePaths(paths.filter((path) => !images.includes(path)))
-    },
-    [appendImagePaths, canAttachImages, insertFilePaths]
-  )
-  const dropHandlers = useTerminalRichInputDrop({ open, pane, insertPaths: insertDroppedPaths })
+  const insertDroppedPaths = useTerminalRichInputPathInsertion({
+    editor,
+    agent,
+    resourceContext,
+    targetShell,
+    sending,
+    canAttachImages,
+    appendImagePaths
+  })
+  const dropHandlers = useTerminalRichInputDrop({
+    open: open && !sending,
+    pane,
+    insertPaths: insertDroppedPaths
+  })
   const hasSubmissionContent = Boolean(draft.trim() || attachments.length > 0)
   const submissionBlocked = sending || attachmentBusy || dropHandlers.busy
 
-  const submit = useCallback(async () => {
+  const submit = async (): Promise<void> => {
     if (submissionBlocked || !hasSubmissionContent || !editor) {
       return
     }
-    const submittedAttachments = attachments
     setSending(true)
     setSendError(null)
-    editor.setEditable(false)
-    let result: Awaited<ReturnType<typeof onSubmit>> = { status: 'not-started' }
-    try {
-      result = await onSubmit(
-        draft,
-        submittedAttachments.map((attachment) => attachment.path)
-      )
-    } catch {
-      result = { status: 'not-started' }
-    }
+    const result = await submitTerminalRichInputEditor({
+      draft,
+      attachments,
+      editor,
+      onSubmit,
+      inlineImageText: getTerminalRichInputInlineImageFormatter(agent, targetShell)
+    })
     setSending(false)
-    editor.setEditable(true)
     if (result.status !== 'submitted') {
-      if (result.status === 'partially-written') {
-        removeWrittenTerminalRichInputContent(
-          result,
-          submittedAttachments,
-          editor,
-          removeAttachment
-        )
-      }
       setSendError(result.status)
-      editor.commands.focus('end')
-      return
     }
-    editor.commands.clearContent()
-    removeAttachments(submittedAttachments.map((attachment) => attachment.id))
-    editor.commands.focus('start')
-  }, [
-    attachments,
-    draft,
-    editor,
-    hasSubmissionContent,
-    onSubmit,
-    removeAttachment,
-    removeAttachments,
-    submissionBlocked
-  ])
+  }
   submitRef.current = () => void submit()
 
   const { layoutOpen } = useTerminalRichInputAnimation({ open, pane })
@@ -331,15 +336,21 @@ export function TerminalRichInput({
       data-pane-prevent-terminal-focus=""
       aria-hidden={!open}
       inert={open ? undefined : true}
-      onPasteCapture={(event) => handlePaste(event.nativeEvent)}
+      onPasteCapture={(event) =>
+        handlePaste(event.nativeEvent, editorRef.current?.state.selection.from)
+      }
       onDragOver={dropHandlers.onDragOver}
       onDrop={dropHandlers.onDrop}
     >
       <div className="terminal-rich-input-dock-content min-h-0 overflow-hidden">
-        <div
-          className="border-t border-border bg-transparent px-2 pb-2 pt-1.5"
-          data-terminal-rich-input-dock=""
-        >
+        <div className="relative bg-transparent px-2 pb-2 pt-1.5" data-terminal-rich-input-dock="">
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex -translate-y-1/2 items-center">
+            <div className="h-px flex-1 bg-border" />
+            <div className="px-1.5 text-[11px] leading-none text-muted-foreground">
+              {translate('components.terminal.richInput.label', 'Rich terminal input')}
+            </div>
+            <div className="h-px w-3 bg-border" />
+          </div>
           <div className="relative w-full">
             {mention ? (
               <TerminalRichInputFileMenu
@@ -363,34 +374,18 @@ export function TerminalRichInput({
               <div className="mb-1.5 px-1 text-xs text-destructive">{attachmentNotice}</div>
             ) : null}
             <div
-              data-terminal-rich-input-card=""
-              className={cn(
-                'rounded-lg border border-input bg-transparent p-1.5 shadow-xs transition-colors',
-                'focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/50'
-              )}
+              className="bg-transparent p-1.5"
               onMouseDown={(event) => {
                 if (event.target === event.currentTarget) {
                   editor?.commands.focus('end')
                 }
               }}
             >
-              <TerminalRichInputAttachments
-                attachments={attachments}
+              <TerminalRichInputAttachmentPending
                 pending={attachmentPending || dropHandlers.imagePending}
-                connectionId={connectionId}
-                runtimeEnvironmentId={runtimeEnvironmentId}
-                worktreeId={worktreeId}
-                onRemove={removeAttachment}
               />
               <div className="relative">
-                {!draft ? (
-                  <span className="pointer-events-none absolute left-2 top-1 text-sm text-muted-foreground/60">
-                    {translate(
-                      'components.terminal.richInput.placeholder',
-                      'Write a terminal prompt…'
-                    )}
-                  </span>
-                ) : null}
+                {!draft && attachments.length === 0 ? <RichInputPlaceholder agent={agent} /> : null}
                 <EditorContent editor={editor} />
               </div>
               <div className="flex items-center gap-2 px-1 pt-0.5">
