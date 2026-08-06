@@ -178,9 +178,17 @@ async function writeBufferViaSystemSshWindows(
 
 function makeWindowsWriteFileCommand(
   remotePath: string,
-  options?: { append?: boolean; exclusive?: boolean }
+  options?: { append?: boolean; exclusive?: boolean; mode?: number }
 ): string {
   const fileMode = options?.append ? 'Append' : options?.exclusive ? 'CreateNew' : 'Create'
+  const restrictAccess =
+    options?.mode === 0o600
+      ? [
+          '$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
+          '& icacls.exe $path /inheritance:r /grant:r "${identity}:(F)" | Out-Null',
+          'if ($LASTEXITCODE -ne 0) { throw "icacls failed" }'
+        ]
+      : []
   return powerShellCommand(
     [
       '$ErrorActionPreference = "Stop"',
@@ -189,7 +197,8 @@ function makeWindowsWriteFileCommand(
       'if ($parent) { $null = [System.IO.Directory]::CreateDirectory($parent) }',
       '$inputStream = [Console]::OpenStandardInput()',
       `$outputStream = [System.IO.File]::Open($path, [System.IO.FileMode]::${fileMode}, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)`,
-      'try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }'
+      'try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }',
+      ...restrictAccess
     ].join('; ')
   )
 }

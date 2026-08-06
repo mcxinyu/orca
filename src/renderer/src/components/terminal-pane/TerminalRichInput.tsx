@@ -293,7 +293,7 @@ export function TerminalRichInput({
     appendImagePaths
   })
   const dropHandlers = useTerminalRichInputDrop({
-    open: open && !sending,
+    open,
     pane,
     insertPaths: insertDroppedPaths
   })

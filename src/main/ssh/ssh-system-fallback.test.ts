@@ -678,7 +678,7 @@ describe('spawnSystemSsh', () => {
       createTarget(),
       'C:/Users/me/logo.png',
       Buffer.from('png'),
-      { hostPlatform, exclusive: true }
+      { hostPlatform, exclusive: true, mode: 0o600 }
     )
     proc.emit('close', 0, null)
 
@@ -687,6 +687,8 @@ describe('spawnSystemSsh', () => {
     const remoteCommand = args.at(-1) ?? ''
     expect(remoteCommand).toContain('powershell.exe')
     expect(decodePowerShellCommand(remoteCommand)).toContain('CreateNew')
+    expect(decodePowerShellCommand(remoteCommand)).toContain('icacls.exe')
+    expect(decodePowerShellCommand(remoteCommand)).toContain('/inheritance:r /grant:r')
     expect(remoteCommand).not.toContain('/bin/sh')
     expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from('png'))
   })

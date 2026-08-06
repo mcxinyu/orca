@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Fragment, Schema, Slice } from '@tiptap/pm/model'
-import { AllSelection, EditorState, NodeSelection } from '@tiptap/pm/state'
+import { AllSelection, EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state'
 import {
   rekeyTerminalRichInputPastedImages,
   terminalRichInputClipboardProps,
@@ -155,6 +155,15 @@ describe('terminalRichInputClipboardText', () => {
     expect({ from: state.selection.from, to: state.selection.to }).toEqual({ from: 1, to: 3 })
     state = state.apply(state.tr.deleteSelection())
     expect(state.doc.toJSON().content?.[0]).toEqual({ type: 'paragraph' })
+
+    state = EditorState.create({ doc, selection: TextSelection.create(doc, 1, 2) })
+    props.handleDOMEvents.cut({
+      get state() {
+        return state
+      },
+      dispatch: (transaction) => (state = state.apply(transaction))
+    } as never)
+    expect({ from: state.selection.from, to: state.selection.to }).toEqual({ from: 1, to: 3 })
   })
 
   it('converts forged external rich-input nodes to visible file-reference text', () => {

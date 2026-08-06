@@ -79,18 +79,21 @@ function finishSelectionDrag(view: EditorView): void {
 
 function expandImageCutSelection(view: EditorView): false {
   const { selection } = view.state
+  const selectedImageEndsAtTo =
+    (selection instanceof NodeSelection &&
+      selection.node.type.name === TERMINAL_RICH_INPUT_IMAGE_ATTACHMENT_NODE) ||
+    selection.$to.nodeBefore?.type.name === TERMINAL_RICH_INPUT_IMAGE_ATTACHMENT_NODE
+  const next = view.state.doc.nodeAt(selection.to)
   if (
-    selection instanceof NodeSelection &&
-    selection.node.type.name === TERMINAL_RICH_INPUT_IMAGE_ATTACHMENT_NODE
+    selectedImageEndsAtTo &&
+    next?.isText &&
+    next.text?.startsWith(TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER)
   ) {
-    const next = view.state.doc.nodeAt(selection.to)
-    if (next?.isText && next.text?.startsWith(TERMINAL_RICH_INPUT_IMAGE_CARET_SPACER)) {
-      view.dispatch(
-        view.state.tr.setSelection(
-          TextSelection.create(view.state.doc, selection.from, selection.to + 1)
-        )
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, selection.from, selection.to + 1)
       )
-    }
+    )
   }
   return false
 }
