@@ -40,9 +40,12 @@ export async function saveClipboardImageBufferAsTempFile(
     const provider = requireSshFilesystemProvider(args.connectionId)
     const remoteTempDir = (await provider.getTempDir?.()) ?? REMOTE_CLIPBOARD_IMAGE_TEMP_DIR
     const remotePath = joinRemotePath(remoteTempDir, fileName)
+    if (!provider.writePrivateFileBase64) {
+      throw new Error('Private remote clipboard image writes are unavailable. Reconnect and retry.')
+    }
     // Why: SSH terminal agents run on the remote host, so the pasted path must
-    // name a remote file. The provider's base64 path writes binary bytes via SFTP.
-    await provider.writeFileBase64(remotePath, buffer.toString('base64'))
+    // name a remote file. The provider creates it with owner-only permissions.
+    await provider.writePrivateFileBase64(remotePath, buffer.toString('base64'))
     return remotePath
   }
 
