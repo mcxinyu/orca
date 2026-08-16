@@ -22,7 +22,7 @@ export function TerminalRichInputSendButton({
           size="icon-sm"
           className="ml-auto size-8 rounded-md border border-border text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground"
           data-terminal-rich-input-send=""
-          disabled={disabled}
+          disabled={disabled || sending}
           onClick={onSend}
           aria-label={label}
         >
