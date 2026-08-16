@@ -43,7 +43,6 @@ vi.mock('./clipboard-image-temp-file', () => ({
 }))
 vi.mock('../ipc/filesystem-auth', () => ({
   authorizeExternalPath: authorizeExternalPathMock,
-  isENOENT: () => false,
   PATH_ACCESS_DENIED_MESSAGE: 'Access denied',
   resolveAuthorizedPath: vi.fn()
 }))
