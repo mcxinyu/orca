@@ -27,6 +27,7 @@ export type WellKnownAgentType =
   | 'antigravity'
   | 'amp'
   | 'opencode'
+  | 'opencode2'
   | 'mimo-code'
   | 'cursor'
   | 'copilot'
