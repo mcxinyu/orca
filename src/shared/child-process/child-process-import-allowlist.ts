@@ -117,7 +117,6 @@ export const CHILD_PROCESS_IMPORT_ALLOWLIST: readonly string[] = [
   'src/main/providers/macos-tcc-login-shell.ts',
   'src/main/providers/process-cwd.ts',
   'src/main/providers/windows-conpty-process-membership.ts',
-  'src/main/providers/windows-foreground-process-rows.ts',
   'src/main/pty-descendant-termination.ts',
   'src/main/pty/posix-pty-foreground-group.ts',
   'src/main/pty/posix-pty-process-groups.ts',
