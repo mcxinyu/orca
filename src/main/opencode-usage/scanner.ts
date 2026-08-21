@@ -1,9 +1,6 @@
 import { yieldToEventLoop } from '../../shared/event-loop-yield'
 import { isOpenCodeV2DatabaseName } from '../../shared/opencode-database-name'
-import { wslGatedReaddir, wslGatedStat } from '../native-chat/wsl-transcript-fs-access'
-import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
-import { areWorktreePathsEqual } from '../ipc/worktree-logic'
-import { resolveOpenCodeDataDirectory } from '../opencode/opencode-data-directory'
+import { basename } from 'node:path'
 import Database from '../sqlite/sync-database'
 import { createUsageEventAggregation } from '../usage/usage-event-aggregation'
 import {

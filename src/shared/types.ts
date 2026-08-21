@@ -9,7 +9,7 @@ import type {
 import type { Automation, AutomationExecutionTargetType, AutomationRun } from './automations-types'
 import type { WorkspaceSource } from './workspace-source'
 import type { DedicatedRepoChannel, ReleaseBuild, ReleaseChannel } from './release-channel'
-import type { GitHubProjectSettings } from './github-project-types'
+import type { GitHubProjectSettings } from './github/project-types'
 import type {
   AgentStatusState,
   AgentType,
