@@ -25,6 +25,7 @@ type SystemSshOperationOptions = SystemSshBuildArgsOptions & {
 type SystemSshWriteBufferOptions = SystemSshOperationOptions & {
   append?: boolean
   exclusive?: boolean
+  mode?: number
 }
 
 type SystemSshUploadFileOptions = SystemSshOperationOptions & {
@@ -177,9 +178,23 @@ async function writeBufferViaSystemSshWindows(
 
 function makeWindowsWriteFileCommand(
   remotePath: string,
-  options?: { append?: boolean; exclusive?: boolean }
+  options?: { append?: boolean; exclusive?: boolean; mode?: number }
 ): string {
   const fileMode = options?.append ? 'Append' : options?.exclusive ? 'CreateNew' : 'Create'
+  const openOutputStream =
+    options?.mode === 0o600
+      ? [
+          '$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User',
+          '$security = [System.Security.AccessControl.FileSecurity]::new()',
+          '$security.SetOwner($identity)',
+          '$security.SetAccessRuleProtection($true,$false)',
+          '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow)',
+          '$security.AddAccessRule($rule)',
+          `$outputStream = [System.IO.FileStream]::new($path,[System.IO.FileMode]::${fileMode},[System.Security.AccessControl.FileSystemRights]::Write,[System.IO.FileShare]::None,4096,[System.IO.FileOptions]::None,$security)`
+        ]
+      : [
+          `$outputStream = [System.IO.File]::Open($path, [System.IO.FileMode]::${fileMode}, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)`
+        ]
   return powerShellCommand(
     [
       '$ErrorActionPreference = "Stop"',
@@ -187,7 +202,7 @@ function makeWindowsWriteFileCommand(
       '$parent = [System.IO.Path]::GetDirectoryName($path)',
       'if ($parent) { $null = [System.IO.Directory]::CreateDirectory($parent) }',
       '$inputStream = [Console]::OpenStandardInput()',
-      `$outputStream = [System.IO.File]::Open($path, [System.IO.FileMode]::${fileMode}, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)`,
+      ...openOutputStream,
       'try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }'
     ].join('; ')
   )
@@ -195,11 +210,12 @@ function makeWindowsWriteFileCommand(
 
 function makePosixWriteFileCommand(
   remotePath: string,
-  options?: { append?: boolean; exclusive?: boolean }
+  options?: { append?: boolean; exclusive?: boolean; mode?: number }
 ): string {
   const redirection = options?.append ? '>>' : '>'
+  const privateMode = options?.mode === 0o600 ? 'umask 077; ' : ''
   const noclobber = !options?.append && options?.exclusive ? 'set -C; ' : ''
-  return `${noclobber}cat ${redirection} ${shellEscape(remotePath)}`
+  return `${privateMode}${noclobber}cat ${redirection} ${shellEscape(remotePath)}`
 }
 
 function makeWindowsReadFileCommand(remotePath: string): string {

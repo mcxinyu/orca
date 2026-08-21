@@ -120,6 +120,10 @@ import {
 } from '@/lib/pane-manager/pane-pty-resize-hold'
 import { CSI_SEQUENCE_PATTERN } from '../../../../shared/ansi-escape-sequences'
 import {
+  PANE_TUI_REPAINT_REQUEST_EVENT,
+  type PaneTuiRepaintRequestDetail
+} from '@/lib/pane-manager/pane-tui-repaint-request'
+import {
   buildPostReplayLiveAgentReattachReset,
   POST_REPLAY_LIVE_AGENT_SNAPSHOT_RESET,
   POST_REPLAY_LIVE_SNAPSHOT_RESET,
@@ -4379,6 +4383,20 @@ export function connectPanePty(
     forwardPtyResize(detail.cols, detail.rows)
   }
   pane.container.addEventListener(PANE_PTY_RESIZE_HOLD_FLUSH_EVENT, onHeldPtyResizeFlush)
+  const onTuiRepaintRequest = (event: Event): void => {
+    const detail = (event as CustomEvent<PaneTuiRepaintRequestDetail>).detail
+    if (
+      detail &&
+      detail.cols === pane.terminal.cols &&
+      detail.rows === pane.terminal.rows &&
+      pane.terminal.buffer.active.type === 'alternate'
+    ) {
+      // Reassert only the settled size through the normal authority/hold path;
+      // transient dimensions can strand delayed SSH or runtime resize relays.
+      forwardPtyResize(detail.cols, detail.rows)
+    }
+  }
+  pane.container.addEventListener(PANE_TUI_REPAINT_REQUEST_EVENT, onTuiRepaintRequest)
 
   const onResizeDisposable = pane.terminal.onResize(({ cols, rows }) => {
     if (suppressStructuralReplayPtyResize || suppressViewportClaimTerminalResize) {
@@ -9633,6 +9651,7 @@ export function connectPanePty(
       terminalCapabilityRepliesDisposable.dispose()
       onResizeDisposable.dispose()
       pane.container.removeEventListener(PANE_PTY_RESIZE_HOLD_FLUSH_EVENT, onHeldPtyResizeFlush)
+      pane.container.removeEventListener(PANE_TUI_REPAINT_REQUEST_EVENT, onTuiRepaintRequest)
       geometryReportObserver?.disconnect()
       if (pendingGeometryReportRaf !== null) {
         cancelAnimationFrame(pendingGeometryReportRaf)

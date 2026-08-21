@@ -67,6 +67,13 @@ import {
   arePaneTitleOverlayRectsEqual,
   clearPaneTitleOverlayRects
 } from './pane-title-overlay-rects'
+import { TerminalRichInput } from './TerminalRichInput'
+import { resolveTerminalDropTargetShell } from './terminal-drop-shell'
+import {
+  submitTerminalRichInput,
+  type TerminalRichInputSubmitResult
+} from './terminal-rich-input-submit'
+import type { AgentType } from '../../../../shared/agent-status-types'
 import NativeChatView from '../native-chat/NativeChatView'
 import { splitTerminalPaneWithInheritedCwd } from './terminal-pane-split-with-inherited-cwd'
 import { TerminalAgentSessionForkDialog } from './TerminalAgentSessionForkDialog'
@@ -189,6 +196,7 @@ import {
   assertClipboardTextWithinLimitWithYield,
   type ReadClipboardTextOptions
 } from '../../../../shared/clipboard-text'
+import { terminalPasteIsOwnedByOverlay } from './terminal-paste-overlay-target'
 import { scheduleImagePasteWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
 import { restoreTerminalFitToDesktop, restoreTerminalFitsToDesktop } from './terminal-fit-restore'
 import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
@@ -202,12 +210,6 @@ import {
   updateTerminalRemoteRuntimeRecoveryUiState,
   type VisiblePtyRecoveryState
 } from './terminal-remote-runtime-recovery-ui-state'
-
-const NATIVE_CHAT_ROOT_SELECTOR = '[data-native-chat-root="true"]'
-
-function isInsideNativeChatRoot(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(NATIVE_CHAT_ROOT_SELECTOR) !== null
-}
 
 // Why: registry lives in a leaf module to break the slice → TerminalPane → store → slice import cycle that leaves createTerminalSlice undefined at init.
 import { shutdownBufferCaptures } from './shutdown-buffer-captures'
@@ -393,6 +395,7 @@ function TerminalPane(
   const [tabWideAgentHintLeafId, setTabWideAgentHintLeafId] = useState<string | null | undefined>(
     undefined
   )
+  const [richInputLeafId, setRichInputLeafId] = useState<string | null>(null)
   // Why: each Add action starts with a fresh draft so the terminal menu doesn't reuse cancelled quick-command text.
   const [quickCommandDraft, setQuickCommandDraft] = useState(createTerminalQuickCommandDraft)
   const [agentSessionFork, setAgentSessionFork] = useState<PreparedAgentSessionFork | null>(null)
@@ -517,6 +520,52 @@ function TerminalPane(
   )
   const nativeChatEnabled = useAppStore((store) => store.settings?.experimentalNativeChat === true)
   const effectiveChatViewMode = nativeChatEnabled && isChatViewMode
+  const closeRichInput = useCallback(() => {
+    setRichInputLeafId(null)
+    requestAnimationFrame(() => {
+      const manager = managerRef.current
+      const pane = manager?.getActivePane() ?? manager?.getPanes()[0]
+      pane?.terminal.focus()
+    })
+  }, [])
+  const toggleRichInput = useCallback(() => {
+    if (effectiveChatViewMode) {
+      return
+    }
+    const activeLeafId = managerRef.current?.getActivePane()?.leafId ?? null
+    if (!activeLeafId) {
+      return
+    }
+    if (richInputLeafId === activeLeafId) {
+      closeRichInput()
+      return
+    }
+    setRichInputLeafId(activeLeafId)
+  }, [closeRichInput, effectiveChatViewMode, richInputLeafId])
+  const submitRichInputForPane = useCallback(
+    async (
+      pane: ManagedPane,
+      text: string,
+      imagePaths: string[]
+    ): Promise<TerminalRichInputSubmitResult> => {
+      const transport = paneTransportsRef.current.get(pane.id)
+      const ptyId = transport?.getPtyId() ?? null
+      if (ptyId && isPtyLocked(ptyId)) {
+        return { status: 'not-started' }
+      }
+      return await submitTerminalRichInput({
+        text,
+        imagePaths,
+        tabId,
+        worktreeId,
+        pane,
+        transport,
+        getManager: () => managerRef.current,
+        getPaneTransports: () => paneTransportsRef.current
+      })
+    },
+    [tabId, worktreeId]
+  )
   const unifiedTabLabel = useAppStore(
     (store) =>
       getCachedUnifiedTerminalTabForWorktree(store.unifiedTabsByWorktree, worktreeId, tabId)?.label
@@ -674,6 +723,7 @@ function TerminalPane(
       }
       setChatLeafId(leafId)
       if (!effectiveChatViewMode) {
+        setRichInputLeafId(null)
         toggleTabViewMode(unifiedTabId)
       }
     },
@@ -1682,6 +1732,7 @@ function TerminalPane(
     onClearPaneScrollback: clearPaneScrollback,
     onSetTitle: handleStartRename,
     onClearPaneTitle: handleClearPaneTitleShortcut,
+    onToggleRichInput: toggleRichInput,
     searchOpenRef,
     searchStateRef,
     macOptionAsAltRef,
@@ -2025,10 +2076,7 @@ function TerminalPane(
     }
     const onKeyPaste = (e: KeyboardEvent): void => {
       const target = e.target
-      if (
-        (target instanceof Element && target.closest('[data-terminal-search-root]')) ||
-        isInsideNativeChatRoot(target)
-      ) {
+      if (terminalPasteIsOwnedByOverlay(target)) {
         return
       }
       const matchesPaste = keybindingMatchesAction(
@@ -2083,10 +2131,7 @@ function TerminalPane(
     // Fallback: paste events from non-keyboard sources (Edit > Paste menu, programmatic paste, etc.).
     const onPaste = (e: ClipboardEvent): void => {
       const target = e.target
-      if (
-        (target instanceof Element && target.closest('[data-terminal-search-root]')) ||
-        isInsideNativeChatRoot(target)
-      ) {
+      if (terminalPasteIsOwnedByOverlay(target)) {
         return
       }
       if (suppressNextNativePaste) {
@@ -2124,8 +2169,7 @@ function TerminalPane(
       if (
         !(activeElementAtDispatch instanceof Element) ||
         !container.contains(activeElementAtDispatch) ||
-        activeElementAtDispatch.closest('[data-terminal-search-root]') ||
-        isInsideNativeChatRoot(activeElementAtDispatch)
+        terminalPasteIsOwnedByOverlay(activeElementAtDispatch)
       ) {
         return
       }
@@ -2166,8 +2210,7 @@ function TerminalPane(
         !(activeElement instanceof Element) ||
         !container.contains(activeElement) ||
         isEditableTarget(activeElement) ||
-        activeElement.closest('[data-terminal-search-root]') ||
-        isInsideNativeChatRoot(activeElement)
+        terminalPasteIsOwnedByOverlay(activeElement)
       ) {
         return
       }
@@ -2875,6 +2918,7 @@ function TerminalPane(
 
   const activePane = managerRef.current?.getActivePane()
   const managedPanes = managerRef.current?.getPanes() ?? []
+  const activePaneTransport = activePane ? paneTransportsRef.current.get(activePane.id) : undefined
   const showSshReconnectOverlay = Boolean(
     isActive &&
     isVisible &&
@@ -2935,7 +2979,7 @@ function TerminalPane(
     isChatViewMode && activePane?.leafId && activePane.leafId === chatLeafId
   )
   // A split can host different agents, so continuation resolves the specific leaf before using tab-wide hints.
-  const resolveAgentForLeaf = (leafId: string | null): string | null => {
+  const resolveAgentForLeaf = (leafId: string | null): AgentType | null => {
     const detectedAgent = leafId ? (tabAgentTypeByLeaf[leafId] ?? null) : null
     if (detectedAgent) {
       return detectedAgent
@@ -2949,9 +2993,17 @@ function TerminalPane(
       }) ?? resolveTitleAgentForLeaf(leafId)
     )
   }
-  const activePaneCanContinueInNewSession = canContinueAgentSessionInNewSession(
-    resolveAgentForLeaf(activePane?.leafId ?? null)
-  )
+  const activePaneRichInputAgent = resolveAgentForLeaf(activePane?.leafId ?? null)
+  const activePaneConnectionId = activePaneTransport?.getConnectionId?.() ?? null
+  const activePaneRuntimeEnvironmentId = activePaneTransport?.getRuntimeEnvironmentId?.() ?? null
+  const activePaneTargetShell = resolveTerminalDropTargetShell({
+    activeRuntimeEnvironmentId: activePaneRuntimeEnvironmentId,
+    worktreePath: cwd,
+    connectionId: activePaneConnectionId,
+    remotePlatform: getTerminalPasteSshRemotePlatform(activePaneConnectionId)
+  })
+  const activePaneCanContinueInNewSession =
+    canContinueAgentSessionInNewSession(activePaneRichInputAgent)
   const contextMenuCanContinueInNewSession = canContinueAgentSessionInNewSession(
     resolveAgentForLeaf(contextMenuLeafId)
   )
@@ -3071,6 +3123,25 @@ function TerminalPane(
         panes={managerRef.current?.getPanes() ?? []}
         paneIds={sessionRestoredBannerPaneIds}
       />
+      {isActive && !effectiveChatViewMode && activePane?.container
+        ? createPortal(
+            <TerminalRichInput
+              open={richInputLeafId === activePane.leafId}
+              pane={activePane}
+              scopeKey={`${tabId}:${activePane.leafId}`}
+              worktreeId={worktreeId}
+              worktreePath={cwd ?? ''}
+              agent={activePaneRichInputAgent}
+              connectionId={activePaneConnectionId}
+              runtimeEnvironmentId={activePaneRuntimeEnvironmentId}
+              targetShell={activePaneTargetShell}
+              onClose={closeRichInput}
+              onSubmit={(text, imagePaths) => submitRichInputForPane(activePane, text, imagePaths)}
+            />,
+            activePane.container,
+            `terminal-rich-input-${tabId}-${activePane.leafId}`
+          )
+        : null}
       {effectiveChatViewMode && chatPane?.container
         ? createPortal(
             <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 bg-background">
@@ -3214,6 +3285,9 @@ function TerminalPane(
         hiddenStartupStyle={hiddenStartupStyle}
         managerRef={managerRef}
         paneTransportsRef={paneTransportsRef}
+        canToggleRichInput={isActive && !effectiveChatViewMode}
+        isRichInputOpen={richInputLeafId === activePane?.leafId}
+        onToggleRichInput={toggleRichInput}
         canToggleNativeChat={activePaneCanToggleChat}
         isChatViewMode={activePaneIsChatLeaf}
         onToggleNativeChat={handleToggleNativeChat}
