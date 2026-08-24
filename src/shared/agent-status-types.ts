@@ -36,6 +36,7 @@ export type WellKnownAgentType =
   | 'prime-agent'
   | 'droid'
   | 'command-code'
+  | 'kimi'
   | 'grok'
   | 'hermes'
   | 'devin'

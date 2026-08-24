@@ -2788,9 +2788,12 @@ function createWebUiApi(): NonNullable<Partial<PreloadApi>['ui']> {
       ),
     readSelectionClipboardText: () =>
       Promise.reject(new Error('Selection clipboard is unavailable in the web client')),
+    // Runtime previews load from the saved target path; avoid retaining the
+    // full clipboard PNG as a second renderer-side copy in the web client.
     saveClipboardImageAsTempFile: async (args?: {
       connectionId?: string | null
       runtimeEnvironmentId?: string | null
+      includeLocalPreview?: boolean
     }) => {
       if (!requireActiveEnvironmentOrNull()) {
         return null
@@ -2799,7 +2802,10 @@ function createWebUiApi(): NonNullable<Partial<PreloadApi>['ui']> {
       if (!contentBase64) {
         return null
       }
-      return saveClipboardImageAsTempFileInRuntime(contentBase64, args)
+      const path = await saveClipboardImageAsTempFileInRuntime(contentBase64, args)
+      return args?.includeLocalPreview
+        ? { path, previewSrc: createClipboardImageObjectUrl(contentBase64) }
+        : path
     },
     writeClipboardText: writeWebClipboardText,
     writeTerminalClipboardText: writeWebClipboardText,
@@ -3709,6 +3715,15 @@ async function saveClipboardImageAsTempFileInRuntime(
     ).catch(() => {})
     throw error
   }
+}
+
+function createClipboardImageObjectUrl(contentBase64: string): string {
+  const binary = atob(contentBase64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
 }
 
 async function getRemoteRuntimeStatus(): Promise<RuntimeStatus> {

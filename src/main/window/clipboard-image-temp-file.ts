@@ -10,9 +10,16 @@ import { assertClipboardImageByteLengthWithinLimit } from '../../shared/clipboar
 export type SaveClipboardImageAsTempFileArgs = {
   connectionId?: string | null
   runtimeEnvironmentId?: string | null
+  includeLocalPreview?: boolean
+}
+
+export type SavedClipboardImage = {
+  path: string
+  previewSrc?: string
 }
 
 const REMOTE_CLIPBOARD_IMAGE_TEMP_DIR = '/tmp'
+const LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX = 'orca-clipboard-images-'
 
 function joinRemotePath(basePath: string, fileName: string): string {
   if (isWindowsAbsolutePathLike(basePath)) {
@@ -33,13 +40,24 @@ export async function saveClipboardImageBufferAsTempFile(
     const provider = requireSshFilesystemProvider(args.connectionId)
     const remoteTempDir = (await provider.getTempDir?.()) ?? REMOTE_CLIPBOARD_IMAGE_TEMP_DIR
     const remotePath = joinRemotePath(remoteTempDir, fileName)
+    if (!provider.writePrivateFileBase64) {
+      throw new Error('Private remote clipboard image writes are unavailable. Reconnect and retry.')
+    }
     // Why: SSH terminal agents run on the remote host, so the pasted path must
-    // name a remote file. The provider's base64 path writes binary bytes via SFTP.
-    await provider.writeFileBase64(remotePath, buffer.toString('base64'))
+    // name a remote file. The provider creates it with owner-only permissions.
+    await provider.writePrivateFileBase64(remotePath, buffer.toString('base64'))
     return remotePath
   }
 
-  const tempPath = path.join(app.getPath('temp'), fileName)
-  await fs.writeFile(tempPath, buffer)
-  return tempPath
+  const tempDir = await fs.mkdtemp(
+    path.join(app.getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX)
+  )
+  const tempPath = path.join(tempDir, fileName)
+  try {
+    await fs.writeFile(tempPath, buffer, { flag: 'wx', mode: 0o600 })
+    return tempPath
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    throw error
+  }
 }

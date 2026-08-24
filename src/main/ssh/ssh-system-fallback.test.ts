@@ -556,13 +556,14 @@ describe('spawnSystemSsh', () => {
     spawnMock.mockReturnValue(proc)
 
     const promise = writeBufferViaSystemSsh(createTarget(), '/tmp/file', Buffer.from('png'), {
-      exclusive: true
+      exclusive: true,
+      mode: 0o600
     })
     proc.emit('close', 0, null)
 
     await expect(promise).resolves.toBeUndefined()
     const args = spawnMock.mock.calls[0][1] as string[]
-    expect(args.at(-1)).toContain('set -C; cat >')
+    expect(args.at(-1)).toContain('umask 077; set -C; cat >')
     expect(args.at(-1)).toContain('/tmp/file')
     expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from('png'))
   })
@@ -677,7 +678,7 @@ describe('spawnSystemSsh', () => {
       createTarget(),
       'C:/Users/me/logo.png',
       Buffer.from('png'),
-      { hostPlatform, exclusive: true }
+      { hostPlatform, exclusive: true, mode: 0o600 }
     )
     proc.emit('close', 0, null)
 
@@ -685,7 +686,17 @@ describe('spawnSystemSsh', () => {
     const args = spawnMock.mock.calls[0][1] as string[]
     const remoteCommand = args.at(-1) ?? ''
     expect(remoteCommand).toContain('powershell.exe')
-    expect(decodePowerShellCommand(remoteCommand)).toContain('CreateNew')
+    const decodedCommand = decodePowerShellCommand(remoteCommand)
+    expect(decodedCommand).toContain('CreateNew')
+    expect(decodedCommand).toContain('[System.Security.AccessControl.FileSecurity]::new()')
+    expect(decodedCommand).toContain('$security.SetAccessRuleProtection($true,$false)')
+    expect(decodedCommand).toContain(
+      '[System.Security.AccessControl.FileSystemRights]::FullControl'
+    )
+    expect(decodedCommand).not.toContain('icacls.exe')
+    expect(decodedCommand.indexOf('[System.IO.FileStream]::new')).toBeLessThan(
+      decodedCommand.indexOf('$inputStream.CopyTo($outputStream)')
+    )
     expect(remoteCommand).not.toContain('/bin/sh')
     expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from('png'))
   })
