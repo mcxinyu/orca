@@ -58,7 +58,7 @@ describe('terminal rich input submit', () => {
         getPaneTransports: () => panes,
         delay
       })
-    ).resolves.toEqual({ status: 'submitted' })
+    ).resolves.toEqual({ status: 'submitted', deliveryConfirmed: false })
 
     expect(delay).toHaveBeenCalledWith(TERMINAL_RICH_INPUT_SUBMIT_DELAY_MS)
     expect(pane.terminal.input).toHaveBeenCalledWith('\r')
@@ -84,7 +84,7 @@ describe('terminal rich input submit', () => {
         getPaneTransports: () => panes,
         delay
       })
-    ).resolves.toEqual({ status: 'submitted' })
+    ).resolves.toEqual({ status: 'submitted', deliveryConfirmed: false })
 
     expect(mocks.pasteTextIntoTerminalPane).toHaveBeenNthCalledWith(
       1,

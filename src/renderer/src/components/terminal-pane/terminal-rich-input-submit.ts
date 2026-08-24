@@ -2,6 +2,7 @@ import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import { pasteTextIntoTerminalPane } from './terminal-programmatic-text-paste'
+import { waitForRichInputPasteDelivery } from './terminal-rich-input-delivery-wait'
 
 export const TERMINAL_RICH_INPUT_SUBMIT_DELAY_MS = 500
 export const TERMINAL_RICH_INPUT_IMAGE_SETTLE_MS = 300
@@ -9,7 +10,9 @@ export const TERMINAL_RICH_INPUT_IMAGE_SETTLE_MS = 300
 export type TerminalRichInputSubmitResult =
   | { status: 'not-started' }
   | { status: 'partially-written'; imagePathsWritten: number; textWritten: boolean }
-  | { status: 'submitted' }
+  // `deliveryConfirmed: false` means Enter was sent without ever seeing the agent
+  // redraw, so the prompt may still be sitting unsent in the agent's editor.
+  | { status: 'submitted'; deliveryConfirmed: boolean }
 
 type SubmitTerminalRichInputArgs = {
   text: string
@@ -81,8 +84,14 @@ export async function submitTerminalRichInput({
   }
 
   // Why: busy agent TUIs can process Enter before a freshly pasted prompt has
-  // reached their editor, leaving the prompt queued but unsent.
-  await delay(TERMINAL_RICH_INPUT_SUBMIT_DELAY_MS)
+  // reached their editor, leaving the prompt queued but unsent. Wait for the agent's
+  // own redraw rather than a fixed sleep, so a slow link widens the wait and a fast
+  // local pane stops paying the full fallback.
+  const delivery = await waitForRichInputPasteDelivery({
+    terminal: pane.terminal,
+    fallbackDelayMs: TERMINAL_RICH_INPUT_SUBMIT_DELAY_MS,
+    delay
+  })
   const currentPane = getManager()
     ?.getPanes()
     .find((candidate) => candidate.leafId === pane.leafId)
@@ -98,7 +107,7 @@ export async function submitTerminalRichInput({
   currentPane.terminal.input('\r')
   currentPane.terminal.scrollToBottom()
   recordTerminalUserInputForLeaf(tabId, currentPane.leafId)
-  return { status: 'submitted' }
+  return { status: 'submitted', deliveryConfirmed: delivery.confirmed }
 }
 
 function wait(milliseconds: number): Promise<void> {
