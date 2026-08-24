@@ -15,15 +15,12 @@ import {
   queuePanePtyResizeIfHeld,
   type PanePtyResizeHoldFlushDetail
 } from '@/lib/pane-manager/pane-pty-resize-hold'
-import {
-  PANE_TUI_REPAINT_REQUEST_EVENT,
-  type PaneTuiRepaintRequestDetail
-} from '@/lib/pane-manager/pane-tui-repaint-request'
 
 import { FOREGROUND_GRID_DRIFT_CHECK_MIN_MS } from './foreground-output-budgets'
 import { TERMINAL_FOCUS_IN_SEQUENCE, TERMINAL_FOCUS_OUT_SEQUENCE } from './foreground-output-scan'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 import { isCodexPaneStale } from './codex-pane-stale'
+import { installTuiRepaintResizeReassert } from './tui-repaint-resize-reassert'
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
@@ -231,23 +228,7 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
     session.onHeldPtyResizeFlush
   )
 
-  session.onTuiRepaintRequest = (event: Event): void => {
-    const detail = (event as CustomEvent<PaneTuiRepaintRequestDetail>).detail
-    if (
-      detail &&
-      detail.cols === session.pane.terminal.cols &&
-      detail.rows === session.pane.terminal.rows &&
-      session.pane.terminal.buffer.active.type === 'alternate'
-    ) {
-      // Reassert only the settled size through the normal authority/hold path;
-      // transient dimensions can strand delayed SSH or runtime resize relays.
-      session.forwardPtyResize(detail.cols, detail.rows)
-    }
-  }
-  session.pane.container.addEventListener(
-    PANE_TUI_REPAINT_REQUEST_EVENT,
-    session.onTuiRepaintRequest
-  )
+  installTuiRepaintResizeReassert(session)
 
   session.onResizeDisposable = session.pane.terminal.onResize(({ cols, rows }) => {
     if (session.suppressStructuralReplayPtyResize || session.suppressViewportClaimTerminalResize) {

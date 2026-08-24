@@ -17,33 +17,9 @@ export { AGENT_STATUS_MAX_FIELD_LENGTH } from './agent-status-field-normalizatio
 
 export const AGENT_STATUS_STATES = ['working', 'blocked', 'waiting', 'done'] as const
 export type AgentStatusState = (typeof AGENT_STATUS_STATES)[number]
-// Why: agent types aren't a fixed set (custom agents exist); any non-empty string is
-// accepted — these well-known names are just a convenience union for pattern-matching.
-export type WellKnownAgentType =
-  | 'claude'
-  | 'openclaude'
-  | 'codex'
-  | 'gemini'
-  | 'antigravity'
-  | 'amp'
-  | 'opencode'
-  | 'mimo-code'
-  | 'cursor'
-  | 'copilot'
-  | 'aider'
-  | 'pi'
-  | 'omp'
-  | 'prime-agent'
-  | 'droid'
-  | 'command-code'
-  | 'kimi'
-  | 'grok'
-  | 'hermes'
-  | 'devin'
-  | 'ante'
-  | 'trae'
-  | 'unknown'
-export type AgentType = WellKnownAgentType | (string & {})
+import type { AgentType } from './well-known-agent-types'
+
+export type { WellKnownAgentType, AgentType } from './well-known-agent-types'
 
 /** A snapshot of a previous agent state, used to render activity blocks.
  *  Why: intentionally narrower than AgentStatusEntry — tool/assistant context is
