@@ -42,13 +42,13 @@ import type { TerminalTab } from '../../../shared/terminal-tab-types'
 import type { TuiAgent } from '../../../shared/tui-agent'
 import { hasFeatureInteraction } from '../../../shared/feature-interactions'
 import BrowserPane from './browser-pane/BrowserPane'
-import { RetainedBrowserPaneOverlayLayer } from './browser-pane/BrowserPaneOverlayLayer'
+import { RetainedBrowserPaneOverlayLayer } from './browser-pane/assemble-chrome/BrowserPaneOverlayLayer'
 import EmulatorPaneOverlayLayer from './emulator-pane/EmulatorPaneOverlayLayer'
 import {
   isBrowserAutomationVisible,
   onBrowserAutomationVisibilityChange,
   useBrowserAutomationVisibilityForAny
-} from './browser-pane/browser-automation-visibility'
+} from './browser-pane/host-guest/browser-automation-visibility'
 import {
   isBrowserPageMobileDriven,
   onBrowserDriverChange,
@@ -57,7 +57,7 @@ import {
 import {
   useAnyBrowserGuestNeedsPaint,
   useWorktreeBrowserPageIds
-} from './browser-pane/browser-guest-paint-retention'
+} from './browser-pane/host-guest/browser-guest-paint-retention'
 import TerminalPaneOverlayLayer from './terminal-pane/TerminalPaneOverlayLayer'
 import {
   collectBrowserWebviewIds,
@@ -70,12 +70,12 @@ import {
   selectBrowserGuestEvictionWorktreeIds,
   touchBrowserGuestWorktreeRecency,
   worktreeHoldsLiveBrowserGuests
-} from './browser-pane/browser-guest-worktree-retention'
+} from './browser-pane/host-guest/browser-guest-worktree-retention'
 import {
   hasActiveBrowserPageDownload,
   installBrowserPageDownloadActivityTracking
-} from './browser-pane/browser-page-download-activity'
-import { hasLiveBrowserGuest } from './browser-pane/webview-registry'
+} from './browser-pane/navigate/browser-page-download-activity'
+import { hasLiveBrowserGuest } from './browser-pane/host-guest/webview-registry'
 import {
   handleSwitchRecentTab,
   handleSwitchTab,
@@ -117,11 +117,15 @@ import {
 } from './terminal-pane/terminal-hidden-view-parking'
 import {
   TERMINAL_HIDDEN_WORKTREE_RETENTION_TTL_MS,
+  countEvictionExemptTabRoutes,
+  formatEvictionExemptRouteCounts,
+  getTerminalWorktreeParkingInputsKey,
   hasPendingRetentionSpawnWork,
   selectForceParkEvictableTabIds,
   selectRetentionForceParkedTerminalWorktrees,
   type TerminalWorktreeRetentionCandidate
 } from './terminal-pane/terminal-hidden-worktree-retention'
+import { recordRendererCrashBreadcrumb } from '@/lib/crash-breadcrumb-recorder'
 import { captureForceParkedWorktreeBuffers } from './terminal-pane/force-park-buffer-capture'
 import { warnTerminalLifecycleAnomaly } from './terminal-pane/terminal-lifecycle-diagnostics'
 import {
@@ -322,6 +326,10 @@ function Terminal(): React.JSX.Element | null {
   )
   const activeView = useAppStore((s) => s.activeView)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
+  const terminalWorktreeParkingInputsKey = useMemo(
+    () => getTerminalWorktreeParkingInputsKey(tabsByWorktree),
+    [tabsByWorktree]
+  )
   const pendingStartupByTabId = useAppStore((s) => s.pendingStartupByTabId)
   const terminalParkingEnabled = useAppStore((s) => s.settings?.terminalHiddenViewParking !== false)
   const terminalSshParkingEnabled = useAppStore((s) => s.settings?.terminalSshViewParking !== false)
@@ -420,7 +428,9 @@ function Terminal(): React.JSX.Element | null {
         : [],
     [renderedActiveWorktreeId, tabsByWorktree]
   )
-  useTerminalProviderSnapshotCapability(workspaceSessionReady && hydrationSucceeded)
+  const terminalProviderSnapshotCapabilityRevision = useTerminalProviderSnapshotCapability(
+    workspaceSessionReady && hydrationSucceeded
+  )
 
   // Why: TabBar portals into the titlebar (target created by App.tsx) so tabs share the "Orca" title row.
   const titlebarTabsTarget = document.getElementById('titlebar-tabs')
@@ -908,6 +918,7 @@ function Terminal(): React.JSX.Element | null {
   // Worktree cold-park policy: hiddenSince bookkeeping, parked-set selection, and one recheck timer per deadline so React re-renders when hysteresis elapses instead of polling.
   useEffect(() => {
     const parkingTimers = terminalWorktreeParkingTimersRef.current
+    const parkingTabsByWorktree = useAppStore.getState().tabsByWorktree
     for (const timer of parkingTimers.values()) {
       window.clearTimeout(timer)
     }
@@ -970,7 +981,7 @@ function Terminal(): React.JSX.Element | null {
 
       retentionCandidates.push({
         worktreeId,
-        terminalTabs: tabsByWorktree[worktreeId] ?? [],
+        terminalTabs: parkingTabsByWorktree[worktreeId] ?? [],
         isVisible,
         shouldMeasureHiddenWorktree,
         hasActivityTerminalPortal,
@@ -1007,7 +1018,7 @@ function Terminal(): React.JSX.Element | null {
       })
     // Why: a worktree with any watcher-uncoverable tab must never park, or it goes silent for bells/titles/completions (sank the first parking attempt).
     for (const worktreeId of Array.from(nextParkedTerminalWorktreeIds)) {
-      if (!worktreeTabsAreWatcherCovered(worktreeId, tabsByWorktree[worktreeId] ?? [])) {
+      if (!worktreeTabsAreWatcherCovered(worktreeId, parkingTabsByWorktree[worktreeId] ?? [])) {
         nextParkedTerminalWorktreeIds.delete(worktreeId)
       }
     }
@@ -1017,7 +1028,7 @@ function Terminal(): React.JSX.Element | null {
     // is the accepted cost of bounding retention.
     const retentionBudgetCandidates: TerminalWorktreeRetentionCandidate[] = retentionCandidates.map(
       (candidate) => {
-        const tabs = tabsByWorktree[candidate.worktreeId] ?? []
+        const tabs = parkingTabsByWorktree[candidate.worktreeId] ?? []
         const parkEligible = canParkTerminalWorktreeRenderers({
           ...candidate,
           // Why nulled: the post-measure cool-down is a timing gate, not a
@@ -1074,7 +1085,7 @@ function Terminal(): React.JSX.Element | null {
     const repos = useAppStore.getState().repos
     const nextEvictionExemptTabIds = new Set<string>()
     for (const worktreeId of forceParkedWorktreeIds) {
-      const forceParkedTabs = tabsByWorktree[worktreeId] ?? []
+      const forceParkedTabs = parkingTabsByWorktree[worktreeId] ?? []
       const exemptTabIds = selectEvictionExemptTerminalTabIds(worktreeId, forceParkedTabs)
       for (const tabId of exemptTabIds) {
         nextEvictionExemptTabIds.add(tabId)
@@ -1096,10 +1107,18 @@ function Terminal(): React.JSX.Element | null {
         // Why logged: an all-exempt force-park frees no heap at all (daemon
         // fail-open makes every local pty exempt), so the budget only holds
         // while this stays rare — make the degenerate case observable.
+        // Why routed + breadcrumbed: only per-route counts in a field bundle
+        // can say whether fail-open ids or unresolved snapshot capability
+        // dominates the degenerate case.
         if (evictableTabIds.length === 0 && forceParkedTabs.length > 0) {
+          const exemptRouteCounts = countEvictionExemptTabRoutes(forceParkedTabs, worktreeId)
           warnTerminalLifecycleAnomaly('retention force-park freed no panes', {
             worktreeId,
-            reason: `exemptTabs=${forceParkedTabs.length}`
+            reason: `exemptTabs=${forceParkedTabs.length} ${formatEvictionExemptRouteCounts(exemptRouteCounts)}`
+          })
+          recordRendererCrashBreadcrumb('terminal_force_park_freed_no_panes', {
+            exemptTabs: forceParkedTabs.length,
+            ...exemptRouteCounts
           })
         }
         // Why conditional: a tab whose pane was mid-remount registered no
@@ -1165,9 +1184,10 @@ function Terminal(): React.JSX.Element | null {
     pendingStartupByTabId,
     pairedRuntimeParkingEnvironmentIds,
     renderedActiveWorktreeId,
-    tabsByWorktree,
+    terminalWorktreeParkingInputsKey,
     terminalParkingEnabled,
     terminalParkingRevision,
+    terminalProviderSnapshotCapabilityRevision,
     terminalRetentionBudgetEnabled,
     terminalSshParkingEnabled,
     workspaceSurfaces

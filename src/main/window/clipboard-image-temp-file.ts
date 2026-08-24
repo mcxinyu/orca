@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app } from 'electron'
+import { getAppEnvironment } from '../../shared/app-environment'
 import { requireSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
 import { assertClipboardImageByteLengthWithinLimit } from '../../shared/clipboard-image'
@@ -50,7 +50,7 @@ export async function saveClipboardImageBufferAsTempFile(
   }
 
   const tempDir = await fs.mkdtemp(
-    path.join(app.getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX)
+    path.join(getAppEnvironment().getPath('temp'), LOCAL_CLIPBOARD_IMAGE_TEMP_DIR_PREFIX)
   )
   const tempPath = path.join(tempDir, fileName)
   try {
