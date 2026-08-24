@@ -5,10 +5,12 @@ import { translate } from '@/i18n/i18n'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import type { TerminalRichInputSubmitResult } from './terminal-rich-input-submit'
 
-export type TerminalRichInputSendError = Exclude<
-  TerminalRichInputSubmitResult['status'],
-  'submitted'
-> | null
+// Why not "error": an unconfirmed send most likely did land — the agent just never
+// redrew within the wait — so it is a caution to check the terminal, not a failure.
+export type TerminalRichInputSendNotice =
+  | Exclude<TerminalRichInputSubmitResult['status'], 'submitted'>
+  | 'unconfirmed'
+  | null
 
 export function terminalRichInputNewlineShortcut(
   platform: NodeJS.Platform = getShortcutPlatform()
@@ -16,28 +18,43 @@ export function terminalRichInputNewlineShortcut(
   return platform === 'darwin' ? '⇧+Enter' : 'Shift+Enter'
 }
 
+/** Message for one status state. Pure so the wording is testable without a render. */
+export function terminalRichInputStatusText(notice: TerminalRichInputSendNotice): string {
+  if (notice === 'partially-written') {
+    return translate(
+      'components.terminal.richInput.sendPartial',
+      'Part of the input was pasted. Check the terminal before retrying.'
+    )
+  }
+  if (notice === 'unconfirmed') {
+    return translate(
+      'components.terminal.richInput.sendUnconfirmed',
+      'Sent, but the agent did not confirm. Check the terminal.'
+    )
+  }
+  if (notice) {
+    return translate('components.terminal.richInput.sendFailed', 'Terminal input was not sent.')
+  }
+  return translate(
+    'components.terminal.richInput.hint',
+    'Enter to send \u00b7 {{value0}} for newline',
+    { value0: terminalRichInputNewlineShortcut() }
+  )
+}
+
 export function TerminalRichInputStatus({
-  error
+  notice
 }: {
-  error: TerminalRichInputSendError
+  notice: TerminalRichInputSendNotice
 }): React.JSX.Element {
   const toggleShortcut = useShortcutKeyDetails('terminal.richInput.toggle')
-  const text = error
-    ? error === 'partially-written'
-      ? translate(
-          'components.terminal.richInput.sendPartial',
-          'Part of the input was pasted. Check the terminal before retrying.'
-        )
-      : translate('components.terminal.richInput.sendFailed', 'Terminal input was not sent.')
-    : translate('components.terminal.richInput.hint', 'Enter to send · {{value0}} for newline', {
-        value0: terminalRichInputNewlineShortcut()
-      })
+  const text = terminalRichInputStatusText(notice)
   return (
     <>
       <SquareTerminal className="size-3.5 text-muted-foreground" />
       <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
         <span>{text}</span>
-        {!error && toggleShortcut.keys.length > 0 ? (
+        {!notice && toggleShortcut.keys.length > 0 ? (
           <>
             <span>·</span>
             <ShortcutKeyCombo

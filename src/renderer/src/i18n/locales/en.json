@@ -16081,7 +16081,8 @@
         "slashCommands": "Slash commands",
         "removeResource": "Remove {{value0}}",
         "previewUnavailable": "Preview unavailable",
-        "openResource": "Open {{value0}} in Orca"
+        "openResource": "Open {{value0}} in Orca",
+        "sendUnconfirmed": "Sent, but the agent did not confirm. Check the terminal."
       }
     },
     "tab": {
