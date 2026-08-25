@@ -34,7 +34,10 @@ import { TerminalRichInputImageAttachment } from './TerminalRichInputImageAttach
 import { RichInputPlaceholder, richInputPlaceholder } from './RichInputPlaceholder'
 import { TerminalRichInputSlashMenu } from './TerminalRichInputSlashMenu'
 import { TerminalRichInputSendButton } from './TerminalRichInputSendButton'
-import { TerminalRichInputStatus, type TerminalRichInputSendError } from './TerminalRichInputStatus'
+import {
+  TerminalRichInputStatus,
+  type TerminalRichInputSendNotice
+} from './TerminalRichInputStatus'
 import {
   findTerminalRichInputAutocomplete,
   sameTerminalRichInputAutocompleteQuery,
@@ -71,7 +74,7 @@ export function TerminalRichInput({
   const [slash, setSlash] = useState<TerminalRichInputQuery | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<TerminalRichInputSendError>(null)
+  const [sendNotice, setSendNotice] = useState<TerminalRichInputSendNotice>(null)
   const mentionRef = useRef(mention)
   const slashRef = useRef(slash)
   const suggestionsRef = useRef<string[]>([])
@@ -195,7 +198,7 @@ export function TerminalRichInput({
         const next = terminalRichInputContentToText(content)
         syncEditorAttachments(content)
         setDraft(next, content)
-        setSendError(null)
+        setSendNotice(null)
         syncAutocomplete(updatedEditor)
       },
       onSelectionUpdate: ({ editor: updatedEditor }) => syncAutocomplete(updatedEditor)
@@ -305,7 +308,7 @@ export function TerminalRichInput({
       return
     }
     setSending(true)
-    setSendError(null)
+    setSendNotice(null)
     const result = await submitTerminalRichInputEditor({
       draft,
       attachments,
@@ -315,7 +318,13 @@ export function TerminalRichInput({
     })
     setSending(false)
     if (result.status !== 'submitted') {
-      setSendError(result.status)
+      setSendNotice(result.status)
+      return
+    }
+    // Why surfaced: the prompt reached the PTY but the agent never redrew inside the
+    // wait, so Enter may have landed before its editor had the text.
+    if (!result.deliveryConfirmed) {
+      setSendNotice('unconfirmed')
     }
   }
   submitRef.current = () => void submit()
@@ -389,7 +398,7 @@ export function TerminalRichInput({
                 <EditorContent editor={editor} />
               </div>
               <div className="flex items-center gap-2 px-1 pt-0.5">
-                <TerminalRichInputStatus error={sendError} />
+                <TerminalRichInputStatus notice={sendNotice} />
                 <TerminalRichInputSendButton
                   sending={sending}
                   disabled={submissionBlocked || !hasSubmissionContent}
