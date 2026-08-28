@@ -264,14 +264,24 @@ export function installDirectSshRetryStatus(session: ConnectPanePtySession): voi
     Boolean(session.connectionId) && !session.shouldDeliverStartupViaTerminalPaste
   session.hadExistingPaneTransportAtConnect = session.deps.paneTransportsRef.current.size > 0
   session.lastTerminalInputAt = Number.NEGATIVE_INFINITY
+  session.terminalInputGeneration = 0
+  session.lastTerminalInputGeneration = null
   session.lastInteractiveRedrawInputAt = Number.NEGATIVE_INFINITY
   session.hasReceivedPtyOutput = false
   session.deferredReattachLiveData = null
   session.reattachLiveDataDeferralDepth = 0
   session.deferredReattachLiveDataOwners = new Map<number, { failed: boolean }>()
   session.transportStreamGeneration = 0
-  session.markTerminalInputSent = (): void => {
+  // Why: acknowledged writes settle asynchronously, so a fast PTY exit can beat the ack callback.
+  session.hasTerminalInputForCurrentPty = (): boolean =>
+    session.lastTerminalInputGeneration === session.terminalInputGeneration &&
+    Number.isFinite(session.lastTerminalInputAt)
+  session.markTerminalInputAttempted = (generation = session.terminalInputGeneration): void => {
     session.lastTerminalInputAt = performance.now()
+    session.lastTerminalInputGeneration = generation
+  }
+  session.markTerminalInputSent = (generation = session.terminalInputGeneration): void => {
+    session.markTerminalInputAttempted(generation)
     session.markInteractiveRedrawInput()
   }
   session.markInteractiveRedrawInput = (): void => {

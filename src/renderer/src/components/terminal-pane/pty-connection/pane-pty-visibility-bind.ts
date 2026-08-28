@@ -118,6 +118,11 @@ export function installPanePtyVisibilityBind(session: ConnectPanePtySession): vo
     // just-created worktree) can be kept visible rather than tearing down the
     // worktree. Reattach/coldRestore skip onPtySpawn (pty-transport.ts).
     session.spawnedFreshPtyId = ptyId
+    // Why: each fresh PTY gets its own startup-retention decision; input sent to a
+    // previous session must not make a replacement shell look user-interacted.
+    session.terminalInputGeneration += 1
+    session.lastTerminalInputAt = Number.NEGATIVE_INFINITY
+    session.lastTerminalInputGeneration = null
     // Why: Command Code has no prompt-start hook. Seed the visible working row
     // once the PTY exists, then let real hook events refine or complete it.
     session.bindActivePanePty(ptyId, { seedInitialAgentStatus: true })

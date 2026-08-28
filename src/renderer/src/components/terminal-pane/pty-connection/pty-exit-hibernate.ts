@@ -280,9 +280,13 @@ export function installPtyExitHibernate(session: ConnectPanePtySession): void {
       return
     }
     session.manager.setPaneGpuRendering(session.pane.id, true)
-    const failedLocalProcess =
-      !session.connectionId && session.runtimeEnvironmentId === null && exitCode !== 0
-    if (failedLocalProcess && session.deps.onPaneProcessDied) {
+    const failedLocalStartup =
+      !session.connectionId &&
+      session.runtimeEnvironmentId === null &&
+      exitCode !== 0 &&
+      session.spawnedFreshPtyId === ptyId &&
+      !session.hasTerminalInputForCurrentPty()
+    if (failedLocalStartup && session.deps.onPaneProcessDied) {
       const gitBashConsoleCapacityFailure = processExitState.detector.detected()
       session.deps.onPaneProcessDied({
         paneId: session.pane.id,
@@ -305,7 +309,7 @@ export function installPtyExitHibernate(session: ConnectPanePtySession): void {
       // for this ptyId — reattach/coldRestore skip it) that the user never typed
       // into, so a reattached-dead session or an explicit `exit` still tears
       // down as before.
-      if (session.spawnedFreshPtyId === ptyId && !Number.isFinite(session.lastTerminalInputAt)) {
+      if (session.spawnedFreshPtyId === ptyId && !session.hasTerminalInputForCurrentPty()) {
         return
       }
       session.deps.onPtyExitRef.current(ptyId)
@@ -315,7 +319,7 @@ export function installPtyExitHibernate(session: ConnectPanePtySession): void {
       session.deps.isVisibleRef.current &&
       session.hadExistingPaneTransportAtConnect &&
       !session.restoredPtyIdForTransport &&
-      !Number.isFinite(session.lastTerminalInputAt) &&
+      !session.hasTerminalInputForCurrentPty() &&
       !session.hasReceivedPtyOutput
     ) {
       // Why: a freshly split pane can lose its newborn PTY during setup; keep

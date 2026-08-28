@@ -98,6 +98,7 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
     // excluded because those transports do not expose sendInputAccepted.
     const acknowledgedIntent = intent ?? session.inferIntentFromExactTerminalInput(data)
     if (acknowledgedIntent && session.transport.sendInputAccepted) {
+      const inputGeneration = session.terminalInputGeneration
       const interruptStatusBaseline =
         useAppStore.getState().agentStatusByPaneKey[session.cacheKey] ?? null
       // Why: equal snapshots retain double-Escape semantics while older snapshots lose ack races.
@@ -113,12 +114,13 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
         session.cancelSuspendedShellCommandInference()
       }
       session.clearPendingTerminalInputIntent()
+      session.markTerminalInputAttempted(inputGeneration)
       const writePromise = session.transport
         .sendInputAccepted(data)
         .then((accepted): boolean | Promise<boolean> | null => {
           if (accepted) {
             // Why: rejected writes use transport recovery and must not arm a parser probe.
-            session.markAcceptedTerminalInputSent()
+            session.markAcceptedTerminalInputSent(inputGeneration)
             session.observeAcceptedShellCommandInput(data)
             session.observeAcceptedTerminalInput(data, acknowledgedIntent)
             const immediateResult = session.interruptInference.observeInputIntent(
@@ -142,9 +144,11 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       return
     }
     if (intent) {
+      const inputGeneration = session.terminalInputGeneration
       session.claimViewportForUserActivity()
+      session.markTerminalInputAttempted(inputGeneration)
       if (session.transport.sendInput(data)) {
-        session.markAcceptedTerminalInputSent()
+        session.markAcceptedTerminalInputSent(inputGeneration)
         session.observeAcceptedShellCommandInput(data)
         session.observeAcceptedTerminalInput(data, intent)
       } else {
@@ -153,9 +157,11 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       session.clearPendingTerminalInputIntent()
       return
     }
+    const inputGeneration = session.terminalInputGeneration
     session.claimViewportForUserActivity()
+    session.markTerminalInputAttempted(inputGeneration)
     if (session.transport.sendInput(data)) {
-      session.markAcceptedTerminalInputSent()
+      session.markAcceptedTerminalInputSent(inputGeneration)
       session.observeAcceptedShellCommandInput(data)
       session.observeAcceptedTerminalInput(data)
       session.observeSentTerminalInputIntent(data)

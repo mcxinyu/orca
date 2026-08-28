@@ -15201,7 +15201,14 @@ export class OrcaRuntimeService {
     ptyId: string,
     exitCode: number,
     exitIncarnationId?: PtyIncarnationId,
-    options?: { hostExitConfirmed?: boolean; cause?: TerminalExitCause }
+    options?: {
+      hostExitConfirmed?: boolean
+      cause?: TerminalExitCause
+      /** The provider's own physical-exit callback fired. Accepted here so the PTY IPC modules
+       *  split out by #15172 typecheck; the reconciliation that consumes it is STA-4612 (#15212),
+       *  which is deliberately not part of this release. */
+      providerExitObserved?: boolean
+    }
   ): void {
     const pty = this.ptysById.get(ptyId)
     if (exitIncarnationId && pty?.incarnationId && exitIncarnationId !== pty.incarnationId) {
@@ -30305,6 +30312,12 @@ export class OrcaRuntimeService {
       shimDir,
       shimBin
     })
+  }
+
+  // Why: a leader handle that never binds to a PTY (lost pane race) has no exit
+  // or close path to evict its team, so the abandoning caller must release it.
+  releaseClaudeAgentTeamsLeaderForHandle(handle: string): void {
+    this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
   }
 
   private waitForNewLeafInTab(
